@@ -15,6 +15,7 @@ from src.audio import AudioExtractionError, extract_audio
 from src.caption import CaptioningError, caption_frames
 from src.frames import FrameSamplingError, sample_frames
 from src.ingest import IngestError, download_video
+from src.notegen import NoteGenError, generate_note
 from src.transcribe import TranscriptionError, transcribe_audio
 
 
@@ -96,10 +97,21 @@ def cmd_caption(video_id: str, max_frames: int | None = None) -> list:
     return results
 
 
+def cmd_notegen(video_id: str, source_url: str) -> Path:
+    print(f"[Note] Generating Obsidian note with {config.OLLAMA_LLM_MODEL}...")
+    try:
+        note_path = generate_note(video_id, source_url)
+    except NoteGenError as e:
+        print(f"FAILED: {e}", file=sys.stderr)
+        sys.exit(1)
+    print(f"  -> Note saved to: {note_path}")
+    return note_path
+
+
 def cmd_process(url: str) -> None:
-    """Run full pipeline: Ingest -> Audio/Frames -> STT -> VLM Captioning."""
+    """Run full pipeline: Ingest -> Audio/Frames -> STT -> VLM Captioning -> Note."""
     print("=" * 60)
-    print("ReelToReal: Processing Pipeline")
+    print("ReelToReal: Full Processing Pipeline")
     print("=" * 60)
 
     # Stage 1: Ingestion (Download + Audio + Frames)
@@ -118,6 +130,12 @@ def cmd_process(url: str) -> None:
     print("Stage 3: Visual Frame Captioning")
     print("-" * 40)
     cmd_caption(video_id)
+
+    # Stage 4: Note Generation
+    print("\n" + "-" * 40)
+    print("Stage 4: Obsidian Note Generation")
+    print("-" * 40)
+    cmd_notegen(video_id, url)
 
     print("\n" + "=" * 60)
     print(f"ALL DONE for video_id={video_id!r}!")
@@ -142,8 +160,13 @@ def main() -> None:
     caption_p.add_argument("video_id", help="Video ID (folder name under data/)")
     caption_p.add_argument("--max-frames", type=int, default=None, help="Max frames to caption")
 
-    # Process (full end-to-end Day 1 + Day 2)
-    process_p = sub.add_parser("process", help="Full pipeline: Ingest + Transcribe + Caption")
+    # Note generation
+    notegen_p = sub.add_parser("notegen", help="Generate Obsidian note from transcript + captions")
+    notegen_p.add_argument("video_id", help="Video ID (folder name under data/)")
+    notegen_p.add_argument("source_url", help="Original video URL (used in note metadata)")
+
+    # Process (full end-to-end Day 1 + Day 2 + Day 3)
+    process_p = sub.add_parser("process", help="Full pipeline: Ingest + Transcribe + Caption + Note")
     process_p.add_argument("url", help="Video URL")
 
     args = parser.parse_args()
@@ -155,6 +178,8 @@ def main() -> None:
         cmd_transcribe(args.video_id)
     elif args.command == "caption":
         cmd_caption(args.video_id, max_frames=args.max_frames)
+    elif args.command == "notegen":
+        cmd_notegen(args.video_id, args.source_url)
     elif args.command == "process":
         cmd_process(args.url)
 
