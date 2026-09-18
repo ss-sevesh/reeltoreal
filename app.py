@@ -138,6 +138,40 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# Fix browser accessibility warning: Streamlit renders inputs with autocomplete=""
+# This JS patch sets meaningful autocomplete values on all input fields at load time.
+st.markdown("""
+<script>
+(function fixAutocomplete() {
+    function patch() {
+        // Text inputs: search query and URL input → "off" (app-specific, not personal data)
+        const inputs = document.querySelectorAll('input[type="text"], input:not([type])');
+        inputs.forEach((el, i) => {
+            if (!el.getAttribute('autocomplete') || el.getAttribute('autocomplete') === '') {
+                // First input is typically search, second is URL
+                const hints = ['search', 'url', 'off'];
+                el.setAttribute('autocomplete', hints[i] || 'off');
+            }
+        });
+        // Chat textarea
+        document.querySelectorAll('textarea').forEach(el => {
+            if (!el.getAttribute('autocomplete') || el.getAttribute('autocomplete') === '') {
+                el.setAttribute('autocomplete', 'off');
+            }
+        });
+    }
+    // Run once DOM is ready, then observe for dynamic Streamlit re-renders
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', patch);
+    } else {
+        patch();
+    }
+    const observer = new MutationObserver(patch);
+    observer.observe(document.body, { childList: true, subtree: true });
+})();
+</script>
+""", unsafe_allow_html=True)
+
 
 # ---------------------------------------------------------------------------
 # Health & Status Helpers
