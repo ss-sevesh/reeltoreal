@@ -14,6 +14,7 @@ from src import config
 from src.audio import AudioExtractionError, extract_audio
 from src.caption import CaptioningError, caption_frames
 from src.frames import FrameSamplingError, sample_frames
+from src.index import build_index, search
 from src.ingest import IngestError, download_video
 from src.notegen import NoteGenError, generate_note
 from src.transcribe import TranscriptionError, transcribe_audio
@@ -108,6 +109,33 @@ def cmd_notegen(video_id: str, source_url: str) -> Path:
     return note_path
 
 
+def cmd_index() -> None:
+    print(f"[Index] Scanning {config.NOTES_DIR} ...")
+    count = build_index()
+    db = config.VAULT_DIR / "index.db"
+    print(f"  -> Indexed {count} note(s) into {db}")
+
+
+def cmd_search(query: str, category: str | None = None) -> None:
+    print(f"[Search] Query: {query!r}" + (f"  category={category}" if category else ""))
+    try:
+        results = search(query, category=category)
+    except FileNotFoundError as e:
+        print(f"FAILED: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if not results:
+        print("  No results found.")
+        return
+
+    for i, r in enumerate(results, 1):
+        print(f"\n  [{i}] {r['title']} ({r['category']})")
+        print(f"       {r['source_url']}")
+        print(f"       {r['snippet']}")
+        print(f"       Tags: {r['tags']}   Date: {r['date']}")
+        print(f"       Note: {r['note_path']}")
+
+
 def cmd_process(url: str) -> None:
     """Run full pipeline: Ingest -> Audio/Frames -> STT -> VLM Captioning -> Note."""
     print("=" * 60)
@@ -165,6 +193,14 @@ def main() -> None:
     notegen_p.add_argument("video_id", help="Video ID (folder name under data/)")
     notegen_p.add_argument("source_url", help="Original video URL (used in note metadata)")
 
+    # Index
+    sub.add_parser("index", help="(Re)build SQLite FTS5 index from vault/Notes/*.md")
+
+    # Search
+    search_p = sub.add_parser("search", help="Keyword search across all indexed notes")
+    search_p.add_argument("query", help="Search query (supports FTS5: AND, OR, NOT, \"phrase\")")
+    search_p.add_argument("--category", default=None, help="Filter by category (food, travel, etc.)")
+
     # Process (full end-to-end Day 1 + Day 2 + Day 3)
     process_p = sub.add_parser("process", help="Full pipeline: Ingest + Transcribe + Caption + Note")
     process_p.add_argument("url", help="Video URL")
@@ -180,6 +216,10 @@ def main() -> None:
         cmd_caption(args.video_id, max_frames=args.max_frames)
     elif args.command == "notegen":
         cmd_notegen(args.video_id, args.source_url)
+    elif args.command == "index":
+        cmd_index()
+    elif args.command == "search":
+        cmd_search(args.query, category=getattr(args, "category", None))
     elif args.command == "process":
         cmd_process(args.url)
 
