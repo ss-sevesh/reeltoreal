@@ -15,6 +15,7 @@ DATA_DIR = Path(os.getenv("DATA_DIR", "./data")).resolve()
 VAULT_DIR = Path(os.getenv("VAULT_DIR", "./vault")).resolve()
 NOTES_DIR = VAULT_DIR / "Notes"
 VIDEOS_DIR = VAULT_DIR / "Videos"
+QDRANT_DIR = VAULT_DIR / "qdrant_storage"
 
 FRAME_INTERVAL_SECONDS = int(os.getenv("FRAME_INTERVAL_SECONDS", "7"))
 
@@ -29,5 +30,5 @@ OLLAMA_LLM_MODEL = os.getenv("OLLAMA_LLM_MODEL", "qwen2.5:1.5b")
 
 def ensure_dirs() -> None:
     """Create every working/output directory the pipeline needs. Safe to call anytime."""
-    for d in (DATA_DIR, VAULT_DIR, NOTES_DIR, VIDEOS_DIR):
+    for d in (DATA_DIR, VAULT_DIR, NOTES_DIR, VIDEOS_DIR, QDRANT_DIR):
         d.mkdir(parents=True, exist_ok=True)

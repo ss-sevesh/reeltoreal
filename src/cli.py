@@ -115,27 +115,39 @@ def cmd_index() -> None:
     print(f"[Index] Scanning {config.NOTES_DIR} ...")
     count = build_index()
     db = config.VAULT_DIR / "index.db"
-    print(f"  -> Indexed {count} note(s) into {db}")
+    print(f"  -> SQLite FTS5: Indexed {count} note(s) into {db}")
+
+    try:
+        from src.vector_db import build_vector_index
+        chunks = build_vector_index()
+        qdrant_dir = config.QDRANT_DIR
+        print(f"  -> Qdrant Vector DB: Indexed {chunks} semantic chunk(s) into {qdrant_dir}")
+    except Exception as e:
+        print(f"  -> Warning: Qdrant indexing failed: {e}", file=sys.stderr)
 
 
 def cmd_search(query: str, category: str | None = None) -> None:
-    print(f"[Search] Query: {query!r}" + (f"  category={category}" if category else ""))
+    print(f"[Hybrid Search] Query: {query!r}" + (f"  (category: {category})" if category else ""))
+    print("Searching via Qdrant Dense Vectors + SQLite FTS5 (Zero LLM delay)...")
     try:
-        results = search_notes(query, category=category)
-    except FileNotFoundError as e:
+        from src.search import hybrid_search
+        results = hybrid_search(query, category=category)
+    except Exception as e:
         print(f"FAILED: {e}", file=sys.stderr)
         sys.exit(1)
 
     if not results:
-        print("  No results found.")
+        print("  No matching reels found.")
         return
 
     for i, r in enumerate(results, 1):
-        print(f"\n  [{i}] {r['title']} ({r['category']})")
-        print(f"       URL:  {r['source_url']}")
-        print(f"       Text: {r['snippet']}")
-        print(f"       Tags: {r['tags']}   Date: {r['date']}")
-        print(f"       Note: {r['note_path']}")
+        ts_str = f" @ {r['timestamp']}" if r.get('timestamp') else ""
+        type_str = f"[{r.get('top_chunk_type', 'match').upper()}{ts_str}]"
+        print(f"\n  [{i}] {r['title']} ({r['category']}) - Match Score: {r['similarity_score']:.1%}")
+        print(f"       Top Moment: {type_str}")
+        print(f"       Excerpt:    {r['highlight_text']}")
+        print(f"       URL:        {r['source_url']}")
+        print(f"       Note:       {r['note_path']}")
 
 
 def cmd_ask(question: str, category: str | None = None) -> None:

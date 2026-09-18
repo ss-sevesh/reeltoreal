@@ -1,8 +1,13 @@
 """
-Stage 6A: Search and retrieval layer for ReelToReal.
+Stage 6A: Hybrid search and retrieval layer for ReelToReal.
 
-Provides resilient keyword & natural language search over vault notes,
-handling FTS5 query formatting, token fallback, and RAG context extraction.
+Combines:
+  1. Dense Semantic Vector Search (Qdrant + FastEmbed) — concept/meaning matching
+  2. Sparse Lexical Search (SQLite FTS5) — exact keywords & phrase matching
+  3. Reciprocal Rank Fusion (RRF) — merges scores for optimal retrieval
+
+Provides instant relevance scores, timestamp pinpointing, and grounded context
+extraction without needing an LLM generation call on every search.
 """
 import json
 import re
@@ -12,6 +17,7 @@ from typing import Any
 
 from src import config
 from src.index import DB_PATH, parse_note
+from src.vector_db import vector_search
 
 # Common English stopwords to ignore when converting a natural language question into FTS search terms
 STOPWORDS = {
@@ -39,14 +45,8 @@ STOPWORDS = {
 
 
 def sanitize_fts_query(query: str) -> str:
-    """
-    Sanitize raw query string for SQLite FTS5.
-    If the query already has explicit FTS operators (AND, OR, NOT, quotes),
-    keep it safe from mismatched quotes/parentheses.
-    """
-    # Remove characters that can break FTS5 parser
+    """Sanitize raw query string for SQLite FTS5 parser."""
     cleaned = re.sub(r'[*?:^~\[\]{}]', ' ', query)
-    # Balance quotes if any
     if cleaned.count('"') % 2 != 0:
         cleaned = cleaned.replace('"', ' ')
     return cleaned.strip()
@@ -66,15 +66,11 @@ def search_notes(
     db_path: Path | None = None,
 ) -> list[dict[str, Any]]:
     """
-    Execute search with intelligent fallback:
-    1. Try verbatim sanitized query (supports exact quotes and AND/OR).
-    2. If 0 results and query has multiple words, try matching extracted keywords with OR.
+    Keyword search in SQLite FTS5 with fallback to OR terms.
     """
     path = db_path or DB_PATH
     if not path.exists():
-        raise FileNotFoundError(
-            f"Search index not found at {path}. Run `python -m src.cli index` first."
-        )
+        return []
 
     def _execute(match_query: str) -> list[dict[str, Any]]:
         conn = sqlite3.connect(str(path))
@@ -115,7 +111,6 @@ def search_notes(
     sanitized = sanitize_fts_query(query)
     results = _execute(sanitized) if sanitized else []
 
-    # If no results found, fallback to keyword-based OR search
     if not results:
         terms = extract_search_terms(query)
         if terms:
@@ -123,6 +118,112 @@ def search_notes(
             results = _execute(fallback_query)
 
     return results
+
+
+def hybrid_search(
+    query: str,
+    category: str | None = None,
+    limit: int = 5,
+    rrf_k: int = 60,
+) -> list[dict[str, Any]]:
+    """
+    Execute Hybrid Search (Dense Vectors from Qdrant + Sparse BM25 from FTS5).
+    Fuses results using Reciprocal Rank Fusion (RRF).
+
+    Returns ranked list of video results with:
+      - video_id, title, category, source_url, note_path
+      - top_moment: {timestamp, chunk_type, text}
+      - rrf_score & semantic similarity score
+    """
+    # 1. Dense Semantic Vector Search (Qdrant)
+    dense_results: list[dict[str, Any]] = []
+    try:
+        dense_results = vector_search(query, limit=limit * 3, category=category)
+    except Exception:
+        dense_results = []
+
+    # 2. Sparse Lexical Search (SQLite FTS5)
+    sparse_results: list[dict[str, Any]] = []
+    try:
+        sparse_results = search_notes(query, category=category, limit=limit * 3)
+    except Exception:
+        sparse_results = []
+
+    # 3. Reciprocal Rank Fusion (RRF)
+    video_scores: dict[str, float] = {}
+    video_data: dict[str, dict[str, Any]] = {}
+    video_top_chunk: dict[str, dict[str, Any]] = {}
+
+    # Score dense vector hits
+    for rank, hit in enumerate(dense_results, 1):
+        vid = hit["video_id"]
+        rrf_score = 1.0 / (rrf_k + rank)
+        video_scores[vid] = video_scores.get(vid, 0.0) + rrf_score
+
+        if vid not in video_data:
+            video_data[vid] = {
+                "video_id": vid,
+                "title": hit["title"],
+                "category": hit["category"],
+                "source_url": hit["source_url"],
+                "note_path": hit["note_path"],
+                "best_score": hit.get("score", 0.0),
+            }
+
+        # Keep highest-scoring chunk as the pinpointed top moment
+        if vid not in video_top_chunk or hit.get("score", 0.0) > video_top_chunk[vid].get("score", 0.0):
+            video_top_chunk[vid] = {
+                "chunk_type": hit.get("chunk_type"),
+                "timestamp": hit.get("timestamp"),
+                "text": hit.get("text"),
+                "score": hit.get("score", 0.0),
+            }
+
+    # Score sparse lexical hits
+    for rank, hit in enumerate(sparse_results, 1):
+        vid = hit["video_id"]
+        rrf_score = 1.0 / (rrf_k + rank)
+        video_scores[vid] = video_scores.get(vid, 0.0) + rrf_score
+
+        if vid not in video_data:
+            video_data[vid] = {
+                "video_id": vid,
+                "title": hit["title"],
+                "category": hit["category"],
+                "source_url": hit["source_url"],
+                "note_path": hit["note_path"],
+                "best_score": 0.5,
+            }
+
+        if vid not in video_top_chunk:
+            video_top_chunk[vid] = {
+                "chunk_type": "keyword",
+                "timestamp": None,
+                "text": hit.get("snippet", ""),
+                "score": 0.5,
+            }
+
+    # Sort combined results by RRF score
+    sorted_vids = sorted(video_scores.keys(), key=lambda v: video_scores[v], reverse=True)[:limit]
+
+    final_results = []
+    for vid in sorted_vids:
+        item = video_data[vid]
+        top_chunk = video_top_chunk.get(vid, {})
+        final_results.append({
+            "video_id": item["video_id"],
+            "title": item["title"],
+            "category": item["category"],
+            "source_url": item["source_url"],
+            "note_path": item["note_path"],
+            "rrf_score": round(video_scores[vid], 5),
+            "similarity_score": top_chunk.get("score", 0.0),
+            "top_chunk_type": top_chunk.get("chunk_type"),
+            "timestamp": top_chunk.get("timestamp"),
+            "highlight_text": top_chunk.get("text"),
+        })
+
+    return final_results
 
 
 def retrieve_context(
@@ -134,14 +235,14 @@ def retrieve_context(
     """
     Retrieve top matching notes with full context (frontmatter, summary,
     transcripts, and visual descriptions) for LLM question answering (RAG).
+    Uses hybrid search to select the most relevant notes.
     """
-    results = search_notes(query, category=category, limit=top_k, db_path=db_path)
+    results = hybrid_search(query, category=category, limit=top_k)
     contexts = []
 
     for r in results:
         note_path = Path(r["note_path"])
         if not note_path.exists():
-            # If path moved, try checking config.NOTES_DIR directly
             note_path = config.NOTES_DIR / note_path.name
 
         if note_path.exists():
@@ -156,21 +257,24 @@ def retrieve_context(
                 "transcript": parsed["transcript"],
                 "captions": parsed["captions"],
                 "note_path": str(note_path),
-                "rank": r.get("rank", 0.0),
+                "timestamp": r.get("timestamp"),
+                "highlight_text": r.get("highlight_text"),
+                "similarity_score": r.get("similarity_score", 0.0),
             })
         else:
-            # Fallback to metadata in SQLite
             contexts.append({
                 "video_id": r["video_id"],
                 "title": r["title"],
                 "category": r["category"],
                 "source_url": r["source_url"],
-                "tags": json.loads(r["tags"]) if r.get("tags") else [],
-                "summary": r.get("snippet", ""),
+                "tags": [],
+                "summary": r.get("highlight_text", ""),
                 "transcript": "",
                 "captions": "",
                 "note_path": r["note_path"],
-                "rank": r.get("rank", 0.0),
+                "timestamp": r.get("timestamp"),
+                "highlight_text": r.get("highlight_text"),
+                "similarity_score": r.get("similarity_score", 0.0),
             })
 
     return contexts

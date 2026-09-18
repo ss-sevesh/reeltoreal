@@ -17,9 +17,10 @@ vault/Videos/*
 vault/Attachments/*
 !vault/Attachments/.gitkeep
 
-# SQLite index (regenerable from vault/Notes)
+# SQLite index & Qdrant vector storage (regenerable from vault/Notes)
 *.db
 *.sqlite3
+vault/qdrant_storage/
 
 # OS
 .DS_Store
