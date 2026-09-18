@@ -55,19 +55,19 @@ def _parse_frontmatter(md_text: str) -> tuple[dict, str]:
         sub_list_item = re.match(r'^    - "?([^"]*)"?', line)
         inline_empty = re.match(r'^  (\w[\w_]*):\s*\[\]', line)
 
-        if top_kv and not line.startswith(" "):
-            key, val = top_kv.group(1), top_kv.group(2).strip()
-            meta[key] = val
-            current_key = key
-            current_list = None
-            in_entities = False
-        elif top_list_start and not line.startswith(" "):
+        if top_list_start and not line.startswith(" "):
             key = top_list_start.group(1)
             current_key = key
             in_entities = (key == "entities")
             if not in_entities:
                 meta[key] = []
                 current_list = meta[key]
+        elif top_kv and not line.startswith(" "):
+            key, val = top_kv.group(1), top_kv.group(2).strip()
+            meta[key] = val
+            current_key = key
+            current_list = None
+            in_entities = False
         elif in_entities and sub_list_start:
             sub_key = sub_list_start.group(1)
             if "entities" not in meta:
@@ -152,11 +152,16 @@ def _extract_section(body: str, heading: str) -> str:
     """Extract content from a Markdown ## Section heading."""
     pattern = rf"##\s+{re.escape(heading)}\s*\n(.*?)(?=\n##|\Z)"
     match = re.search(pattern, body, re.DOTALL | re.IGNORECASE)
-    return match.group(1).strip() if match else ""
+    if not match:
+        return ""
+    text = match.group(1).strip()
+    # Remove any trailing Markdown horizontal rule
+    text = re.sub(r"(?:\n|\s)*---+\s*$", "", text).strip()
+    return text
 
 
-def index_note(conn: sqlite3.Connection, note_path: Path) -> str:
-    """Parse and index a single .md note. Returns video_id."""
+def parse_note(note_path: Path) -> dict[str, Any]:
+    """Parse a .md note into structured frontmatter, sections, and cleaned text."""
     text = note_path.read_text(encoding="utf-8")
     meta, body = _parse_frontmatter(text)
 
@@ -182,6 +187,46 @@ def index_note(conn: sqlite3.Connection, note_path: Path) -> str:
     summary = _strip_markdown(summary_raw)
     transcript = _strip_markdown(transcript_raw)
     captions = _strip_markdown(captions_raw)
+
+    return {
+        "video_id": video_id,
+        "title": title,
+        "category": category,
+        "date": date,
+        "language": language,
+        "source_url": source_url,
+        "duration": duration,
+        "tags": tags,
+        "places": places,
+        "objects": objects,
+        "actions": actions,
+        "summary": summary,
+        "transcript": transcript,
+        "captions": captions,
+        "summary_raw": summary_raw,
+        "transcript_raw": transcript_raw,
+        "captions_raw": captions_raw,
+        "note_path": str(note_path),
+    }
+
+
+def index_note(conn: sqlite3.Connection, note_path: Path) -> str:
+    """Parse and index a single .md note. Returns video_id."""
+    data = parse_note(note_path)
+    video_id = data["video_id"]
+    title = data["title"]
+    category = data["category"]
+    date = data["date"]
+    language = data["language"]
+    source_url = data["source_url"]
+    duration = data["duration"]
+    tags = data["tags"]
+    places = data["places"]
+    objects = data["objects"]
+    actions = data["actions"]
+    summary = data["summary"]
+    transcript = data["transcript"]
+    captions = data["captions"]
     tags_str = " ".join(tags)
 
     # Upsert metadata

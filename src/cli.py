@@ -11,12 +11,14 @@ import sys
 from pathlib import Path
 
 from src import config
+from src.answer import AnswerError, answer_question
 from src.audio import AudioExtractionError, extract_audio
 from src.caption import CaptioningError, caption_frames
 from src.frames import FrameSamplingError, sample_frames
-from src.index import build_index, search
+from src.index import build_index
 from src.ingest import IngestError, download_video
 from src.notegen import NoteGenError, generate_note
+from src.search import search_notes
 from src.transcribe import TranscriptionError, transcribe_audio
 
 
@@ -119,7 +121,7 @@ def cmd_index() -> None:
 def cmd_search(query: str, category: str | None = None) -> None:
     print(f"[Search] Query: {query!r}" + (f"  category={category}" if category else ""))
     try:
-        results = search(query, category=category)
+        results = search_notes(query, category=category)
     except FileNotFoundError as e:
         print(f"FAILED: {e}", file=sys.stderr)
         sys.exit(1)
@@ -130,14 +132,35 @@ def cmd_search(query: str, category: str | None = None) -> None:
 
     for i, r in enumerate(results, 1):
         print(f"\n  [{i}] {r['title']} ({r['category']})")
-        print(f"       {r['source_url']}")
-        print(f"       {r['snippet']}")
+        print(f"       URL:  {r['source_url']}")
+        print(f"       Text: {r['snippet']}")
         print(f"       Tags: {r['tags']}   Date: {r['date']}")
         print(f"       Note: {r['note_path']}")
 
 
+def cmd_ask(question: str, category: str | None = None) -> None:
+    print(f"[Ask] \"{question}\"" + (f"  (category: {category})" if category else ""))
+    print("Searching vault & thinking (Ollama LLM)...")
+    try:
+        res = answer_question(question, category=category)
+    except AnswerError as e:
+        print(f"FAILED: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    print("\n" + "=" * 60)
+    print(res["answer"])
+    print("=" * 60)
+
+    if res["sources"]:
+        print("\nReferenced Reels:")
+        for s in res["sources"]:
+            print(f"  - {s['title']} ({s['category']})")
+            print(f"    URL:  {s['source_url']}")
+            print(f"    Note: {s['note_path']}")
+
+
 def cmd_process(url: str) -> None:
-    """Run full pipeline: Ingest -> Audio/Frames -> STT -> VLM Captioning -> Note."""
+    """Run full pipeline: Ingest -> Audio/Frames -> STT -> VLM Captioning -> Note -> Index."""
     print("=" * 60)
     print("ReelToReal: Full Processing Pipeline")
     print("=" * 60)
@@ -164,6 +187,12 @@ def cmd_process(url: str) -> None:
     print("Stage 4: Obsidian Note Generation")
     print("-" * 40)
     cmd_notegen(video_id, url)
+
+    # Stage 5: Update Search Index
+    print("\n" + "-" * 40)
+    print("Stage 5: Search Indexing")
+    print("-" * 40)
+    cmd_index()
 
     print("\n" + "=" * 60)
     print(f"ALL DONE for video_id={video_id!r}!")
@@ -201,8 +230,13 @@ def main() -> None:
     search_p.add_argument("query", help="Search query (supports FTS5: AND, OR, NOT, \"phrase\")")
     search_p.add_argument("--category", default=None, help="Filter by category (food, travel, etc.)")
 
-    # Process (full end-to-end Day 1 + Day 2 + Day 3)
-    process_p = sub.add_parser("process", help="Full pipeline: Ingest + Transcribe + Caption + Note")
+    # Ask / Answer (Natural Language Q&A / RAG)
+    ask_p = sub.add_parser("ask", help="Ask a question in natural language about saved reels")
+    ask_p.add_argument("question", help="Question to ask (e.g. 'What was the elephant video about?')")
+    ask_p.add_argument("--category", default=None, help="Optional category filter")
+
+    # Process (full end-to-end Day 1 + Day 2 + Day 3 + Day 4)
+    process_p = sub.add_parser("process", help="Full pipeline: Ingest + Transcribe + Caption + Note + Index")
     process_p.add_argument("url", help="Video URL")
 
     args = parser.parse_args()
@@ -220,6 +254,8 @@ def main() -> None:
         cmd_index()
     elif args.command == "search":
         cmd_search(args.query, category=getattr(args, "category", None))
+    elif args.command == "ask":
+        cmd_ask(args.question, category=getattr(args, "category", None))
     elif args.command == "process":
         cmd_process(args.url)
 
