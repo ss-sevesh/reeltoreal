@@ -1,0 +1,26 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Env / secrets
+.env
+
+# Working data (raw downloads, audio, frames — regenerable, often large)
+data/*
+!data/.gitkeep
+
+# Vault media (keep Notes/ in git, not the heavy video files)
+vault/Videos/*
+!vault/Videos/.gitkeep
+vault/Attachments/*
+!vault/Attachments/.gitkeep
+
+# SQLite index (regenerable from vault/Notes)
+*.db
+*.sqlite3
+
+# OS
+.DS_Store
+Thumbs.db
