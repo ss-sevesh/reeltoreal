@@ -34,7 +34,8 @@ It features an **Embedded Qdrant Hybrid Search Engine** that fuses semantic vect
   - **Sparse Lexical**: `SQLite FTS5` (BM25) matches exact words, names, and phrases.
   - **Reciprocal Rank Fusion (RRF)**: Merges both ranking signals for industry-grade retrieval.
 - ⏱️ **Timestamp Pinpointing**: Search results don't just return a video — they tell you the exact moment (e.g. `[CAPTION @ 14s]` or `[TRANSCRIPT @ 4.0s -> 14.0s]`).
-- 🤖 **Grounded Question Answering (RAG)**: Ask natural language questions with `python -m src.cli ask`. `qwen2.5:1.5b` synthesizes grounded answers citing source URLs and reel titles without hallucinating.
+- 🤖 **Grounded Question Answering (RAG)**: Ask natural language questions with `python -m src.cli ask` or via the web chat. `qwen2.5:1.5b` synthesizes grounded answers citing source URLs and reel titles without hallucinating.
+- 🖥️ **Interactive Web Application (Streamlit)**: Complete dark-mode dashboard (`app.py`) featuring real-time hybrid search, RAG chat, live URL ingestion, Obsidian note inspector, and system diagnostics.
 - 🔒 **Zero Docker & Zero Cloud Setup**: Qdrant runs embedded directly on disk (`vault/qdrant_storage/`), and Ollama runs locally.
 
 ---
@@ -131,6 +132,24 @@ copy .env.example .env        # On macOS/Linux: cp .env.example .env
 
 ---
 
+## 🖥️ Web Application Dashboard (Streamlit)
+
+ReelToReal includes a full dark-mode interactive web dashboard:
+
+```powershell
+streamlit run app.py
+```
+*Access the dashboard at `http://localhost:8501` in your browser.*
+
+### Dashboard Capabilities:
+1. 🔍 **Instant Hybrid Search**: Type any query or scene description to retrieve matched reels, scores, exact timecode pills (e.g. `[CAPTION @ 14s]`), and live Obsidian markdown previews.
+2. 💬 **Ask AI (RAG Chat)**: Ask questions over your vault in plain English. `qwen2.5:1.5b` answers strictly using your notes and provides clickable source cards with original reel URLs.
+3. ⚡ **Process New Video**: Paste an Instagram Reel or YouTube Shorts URL, click **Process Video**, and watch live progress bars as it downloads, transcribes, captions, generates notes, and indexes.
+4. 🗄️ **Vault Explorer**: Browse all indexed reels, inspect tags and categories, and read generated notes with embedded timestamps.
+5. 🩺 **Pipeline & Model Diagnostics**: One-click health check testing Ollama server connection, Moondream VLM, Whisper STT, FFmpeg, and Qdrant storage.
+
+---
+
 ## 💻 CLI Usage Guide
 
 ReelToReal provides a modular CLI for running the full pipeline or individual stages:
@@ -224,6 +243,7 @@ python -m src.cli index
 
 ```
 reeltoreal/
+├── app.py               # Streamlit Web Dashboard (Search, Chat, Ingestion, Explorer, Diagnostics)
 ├── src/
 │   ├── ingest.py        # Video download via yt-dlp
 │   ├── audio.py         # 16kHz mono WAV extraction via ffmpeg
@@ -246,6 +266,7 @@ reeltoreal/
 ├── data/                # Intermediate working files (gitignored)
 ├── .env.example         # Configuration template
 ├── requirements.txt     # Python package requirements
+├── LICENSE              # MIT License
 └── README.md
 ```
 
@@ -258,7 +279,7 @@ reeltoreal/
 - [x] **Day 3: Note Generation** (`qwen2.5` LLM fusion -> Obsidian vault notes)
 - [x] **Day 4: Lexical Search Indexer** (`SQLite FTS5` with BM25 ranking)
 - [x] **Day 5: Hybrid RAG & Vector Engine** (Embedded `Qdrant` + `FastEmbed` + RRF fusion + `qwen2.5` Q&A)
-- [ ] **Day 6: Streamlit Interactive UI** (`app.py` for web browsing, video playback, and chat)
+- [x] **Day 6: Streamlit Interactive UI** (`app.py` for web browsing, video playback, and chat)
 - [ ] **Day 7: Performance Polish & Multi-video Batch Importer**
 
 ---
