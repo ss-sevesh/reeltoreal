@@ -1,108 +1,155 @@
 # 🎬 ReelToReal
 
-> **Turn saved Instagram Reels and YouTube Shorts into a searchable, timestamp-pinpointed local knowledge vault.**  
-> *100% Local • Zero Cloud APIs • Embedded Qdrant Vector Search • Obsidian Compatible*
-[![Node.js 18+](https://img.shields.io/badge/Node.js-18+-green.svg)](https://nodejs.org/)
-[![React 18](https://img.shields.io/badge/React-18-blue.svg)](https://react.dev/)
-[![Vite](https://img.shields.io/badge/Vite-6-646CFF.svg)](https://vitejs.dev/)
+> **Transform Instagram Reels and YouTube Shorts into a fully-searchable, timestamped, multimodal knowledge vault — with real-time situational analysis powered by Groq.**
+>
+> *100% Local Ingestion · Hybrid Vector Search · Obsidian Compatible · Groq + Live Web Comparison*
+
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10+-3776AB.svg?logo=python&logoColor=white)](https://python.org/)
+[![Node.js 18+](https://img.shields.io/badge/Node.js-18+-339933.svg?logo=node.js&logoColor=white)](https://nodejs.org/)
+[![React 18](https://img.shields.io/badge/React-18-61DAFB.svg?logo=react&logoColor=black)](https://react.dev/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Ollama](https://img.shields.io/badge/Local_AI-Ollama-black.svg)](https://ollama.com)
-[![Qdrant Hybrid](https://img.shields.io/badge/Vector_DB-Qdrant_Hybrid-red.svg)](https://qdrant.tech/)
-[![Obsidian Ready](https://img.shields.io/badge/Vault-Obsidian_Markdown-purple.svg)](https://obsidian.md)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Qdrant](https://img.shields.io/badge/Vector_DB-Qdrant-DC143C.svg)](https://qdrant.tech/)
+[![Groq](https://img.shields.io/badge/LLM-Groq_Llama3-orange.svg)](https://groq.com/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ---
 
-## 🌟 Why ReelToReal?
+## ✨ What is ReelToReal?
 
-We all save dozens of insightful Instagram Reels and YouTube Shorts — recipes, workouts, travel tips, tech tutorials, and book summaries — only for them to get lost in bookmark graveyards.
+We all save dozens of Instagram Reels and YouTube Shorts — recipes, market tips, language lessons, workouts, travel guides — only for them to disappear into bookmark graveyards.
 
-**ReelToReal** solves this by downloading videos, listening to what is spoken (**Whisper STT**), looking at what is shown (**Moondream VLM**), and structuring everything into an **Obsidian Markdown Vault**.
+**ReelToReal** is an open-source multimodal pipeline that:
 
-It features an **Embedded Hybrid Search Engine** that fuses semantic vectors and exact lexical matching so you can find specific video moments in **under 200 milliseconds** — with **zero LLM overhead**!
+1. **Downloads** any Instagram Reel or YouTube Short via `yt-dlp`
+2. **Transcribes** the full spoken audio with timestamped segments using `faster-whisper`
+3. **Captions** visual frames with a local Vision Language Model (`Moondream` via Ollama)
+4. **Generates** a structured Obsidian Markdown note combining both audio and visual intelligence
+5. **Indexes** everything into a Hybrid Search Engine (Qdrant dense vectors + SQLite FTS5 lexical)
+6. **Answers** natural language questions using Grounded RAG — comparing your saved reel's past claims against **live real-time web data** via Groq (Llama 3.3 70B)
 
 ---
 
 ## 🚀 Key Features
 
-- 🎧 **High-Speed Audio Transcription**: Powered by `faster-whisper` (`distil-large-v3` / `int8`), producing timestamped transcripts (`0.0s -> 4.0s`).
-- 👁️ **Visual Scene Captioning**: Uses `moondream` (via local Ollama) to caption dynamically sampled frames every 7 seconds, indexing objects, actions, and scenes.
-- 📓 **Obsidian-Ready Knowledge Vault**: Automatically generates clean `.md` files in `vault/Notes/` with YAML frontmatter, categorized tags, places, objects, and summary sections.
-- ⚡ **Zero-LLM Hybrid Search (Dense + Sparse)**:
-  - **Dense Vectors**: Embedded `Qdrant` + FastEmbed semantics matches abstract concepts and synonyms.
-  - **Sparse Lexical**: BM25 inverted lexical indexing matches exact words, names, and phrases.
-  - **Reciprocal Rank Fusion (RRF)**: Merges both ranking signals for industry-grade retrieval.
-- ⏱️ **Timestamp Pinpointing**: Search results don't just return a video — they tell you the exact moment (e.g. `[CAPTION @ 14s]` or `[TRANSCRIPT @ 4.0s -> 14.0s]`).
-- 🤖 **Grounded Question Answering (RAG)**: Ask natural language questions via web chat or API. `qwen2.5:1.5b` (via local Ollama) synthesizes grounded answers citing source URLs and reel titles without hallucinating.
-- 🖥️ **Interactive Web Application (React + Vite)**: Complete dark-mode cinematic dashboard featuring real-time hybrid search, Ollama RAG chat, live URL ingestion, Obsidian note inspector, and system diagnostics.
-- 🔒 **Zero Docker & Zero Cloud Setup**: Local storage runs embedded directly on disk (`vault/`), and Ollama runs locally on your machine.
+| Feature | Details |
+|:---|:---|
+| 🎧 **Whisper Transcription** | `faster-whisper` (`distil-large-v3`, `int8` quantized) — full-length timestamped audio, no 28s cutoff |
+| 👁️ **Moondream Visual Captioning** | Frames sampled every 7 seconds, captioned locally via Ollama VLM |
+| 📓 **Obsidian Vault Notes** | Auto-generated `.md` files with YAML frontmatter, transcript, scene descriptions, tags |
+| ⚡ **Hybrid Search (< 200ms)** | Qdrant dense semantic vectors + SQLite FTS5 BM25 lexical — fused via Reciprocal Rank Fusion |
+| ⏱️ **Timestamp Pinpointing** | Returns exact moments: `[TRANSCRIPT @ 4.0s → 14.0s]`, `[CAPTION @ 14s]` |
+| 🌐 **Live Real-Time Web Context** | DuckDuckGo search integration fetches current data to compare against reel claims |
+| 🤖 **Situational RAG Analysis** | Groq (Llama 3.3 70B) or local Ollama compares *"what the reel said then"* vs *"reality today"* |
+| 🔒 **Fully Local Ingestion** | No cloud APIs required for download, transcription, or captioning |
+| 🖥️ **React Web Dashboard** | Dark-mode cinematic UI for search, chat, ingestion, vault browsing, and diagnostics |
 
 ---
 
 ## 🏗️ Architecture
 
 ```
-                                  Video URL (Instagram / YouTube)
-                                                │
-                                                ▼
-                                    [ Ingestion: yt-dlp ]
-                                                │
-                       ┌────────────────────────┴────────────────────────┐
-                       ▼                                                 ▼
-             [ 16kHz Mono Audio ]                              [ Frame Extraction ]
-                       │                                                 │
-                       ▼                                                 ▼
-            [ faster-whisper STT ]                              [ Moondream VLM ]
-          Spoken text + Timestamps                           Visual Scene Descriptions
-                       │                                                 │
-                       └────────────────────────┬────────────────────────┘
-                                                ▼
-                                    [ LLM Fusion: qwen2.5 ]
-                                                │
-                                                ▼
-                                   Obsidian Markdown Note (.md)
-                                  (YAML metadata, transcript, scenes)
-                                                │
-                       ┌────────────────────────┴────────────────────────┐
-                       ▼                                                 ▼
-              [ SQLite FTS5 ]                                   [ Qdrant Vector DB ]
-           BM25 Lexical Indexing                             FastEmbed (384d Dense)
-                       │                                                 │
-                       └────────────────────────┬────────────────────────┘
-                                                ▼
-                                [ Hybrid RRF Fusion Engine ]
-                                                │
-                         ┌──────────────────────┴──────────────────────┐
-                         ▼                                             ▼
-             [ Instant Moment Search ]                     [ Grounded Q&A (RAG) ]
-              Sub-second, Zero LLM                          qwen2.5:1.5b (Ollama)
+                    Video URL (Instagram Reel / YouTube Short)
+                                        │
+                                        ▼
+                              [ Stage 1: yt-dlp Download ]
+                                        │
+                   ┌────────────────────┴────────────────────┐
+                   ▼                                         ▼
+      [ Stage 2A: ffmpeg Audio Extract ]     [ Stage 2B: OpenCV Frame Sampling ]
+           16kHz Mono WAV                       1 frame every 7 seconds
+                   │                                         │
+                   ▼                                         ▼
+       [ Stage 3: faster-whisper STT ]        [ Stage 4: Moondream VLM (Ollama) ]
+     Timestamped spoken transcription           Short visual scene descriptions
+                   │                                         │
+                   └────────────────────┬────────────────────┘
+                                        ▼
+                         [ Stage 5: Note Generation (qwen2.5) ]
+                              Obsidian Markdown vault note
+                                        │
+                   ┌────────────────────┴────────────────────┐
+                   ▼                                         ▼
+         [ Stage 6A: SQLite FTS5 ]            [ Stage 6B: Qdrant Vector DB ]
+         BM25 Lexical Indexing               FastEmbed BAAI/bge-small-en-v1.5 (384d)
+                   │                                         │
+                   └────────────────────┬────────────────────┘
+                                        ▼
+                           [ Hybrid RRF Fusion Engine ]
+                                        │
+              ┌─────────────────────────┴─────────────────────────┐
+              ▼                                                   ▼
+  [ Instant Timestamp Search ]                    [ Situational RAG (Chat) ]
+    < 200ms, Zero LLM overhead                            │
+                                        ┌─────────────────┴──────────────────┐
+                                        ▼                                    ▼
+                             [ Live Web Search ]               [ Vault Context (RAG) ]
+                               DuckDuckGo Today                 Past reel transcript
+                                        │                                    │
+                                        └─────────────────┬──────────────────┘
+                                                          ▼
+                                            [ Groq Llama 3.3 70B (or Ollama) ]
+                                        "Reel said X then. Today it's Y. Here's the diff."
 ```
 
 ---
 
-## 📊 Comparison: Keyword vs. Vector vs. ReelToReal Hybrid
+## 📁 Repository Structure
 
-| Search Query | Traditional FTS5 (BM25) | Vector Search (Qdrant) | ReelToReal Hybrid Search |
-|:---|:---:|:---:|:---:|
-| Exact video ID or title (`jNQXAC9IVRw`) | ✅ 100% Match | ⚠️ Approximate | ✅ **Instant Top Hit** |
-| Synonyms (*"safari wildlife with long trunks"*) | ❌ Misses (words not in text) | ✅ Matches concept | ✅ **Ranked #1 with 66.5% score** |
-| Visual action (*"man in red jacket smiling"*) | ❌ Misses if words differ | ✅ Matches scene | ✅ **Pinpoints [CAPTION @ 14s]** |
-| Latency / Resource usage | ⚡ ~2ms | ⚡ ~10ms | ⚡ **< 200ms (No LLM delay)** |
+```
+reeltoreal/
+│
+├── server.py               # FastAPI Python backend (port 8000)
+├── server.ts               # Express + Vite Node backend (port 3000)
+│
+├── src/                    # Python pipeline modules
+│   ├── config.py           # Centralized config — paths, model names, API keys
+│   ├── ingest.py           # Stage 1: yt-dlp video download
+│   ├── audio.py            # Stage 2A: ffmpeg audio extraction (16kHz mono WAV)
+│   ├── frames.py           # Stage 2B: OpenCV frame sampling (every N seconds)
+│   ├── transcribe.py       # Stage 3: faster-whisper transcription with timestamps
+│   ├── caption.py          # Stage 4: Moondream VLM captioning via local Ollama
+│   ├── notegen.py          # Stage 5: Obsidian markdown note generation
+│   ├── vector_db.py        # Stage 6A/B: Qdrant embedding + indexing
+│   ├── index.py            # SQLite FTS5 BM25 lexical indexer
+│   ├── search.py           # Hybrid RRF search (dense + sparse fusion)
+│   ├── answer.py           # Grounded RAG: Vault context + Live web + Groq/Ollama LLM
+│   ├── classify.py         # Auto category detection from video metadata
+│   ├── cli.py              # CLI interface for all pipeline stages
+│   └── types.ts / App.tsx  # React frontend entrypoints
+│
+├── server/
+│   └── vault.ts            # Node vault parser & fallback hybrid search
+│
+├── vault/
+│   ├── Notes/              # Generated Obsidian markdown notes (.md)
+│   ├── Videos/             # Downloaded video files
+│   ├── Attachments/        # Extra assets
+│   └── qdrant_storage/     # Embedded Qdrant vector database (gitignored)
+│
+├── data/                   # Intermediate pipeline files (gitignored)
+├── app.py                  # Streamlit alternate UI (optional)
+├── requirements.txt        # Python dependencies
+├── package.json            # Node/npm dependencies
+├── vite.config.ts          # Vite bundler config
+├── tsconfig.json           # TypeScript config
+├── .env.example            # Environment config template
+└── README.md
+```
 
 ---
 
 ## 🛠️ Prerequisites
 
-1. **Node.js 18+** and **npm**
-2. **[FFmpeg](https://ffmpeg.org)** installed and available on your system `PATH`:
+1. **Python 3.10+** (Miniconda or system Python)
+2. **Node.js 18+** and **npm**
+3. **[FFmpeg](https://ffmpeg.org)** on your `PATH`:
    ```powershell
-   # Windows (via Chocolatey or Scoop)
-   choco install ffmpeg
-   # macOS
-   brew install ffmpeg
-   # Linux (Ubuntu/Debian)
-   sudo apt install ffmpeg
+   choco install ffmpeg       # Windows (Chocolatey)
+   brew install ffmpeg        # macOS
+   sudo apt install ffmpeg    # Linux
    ```
-3. **[Ollama](https://ollama.com)** running locally:
+4. **[Ollama](https://ollama.com)** running locally with required models:
    ```bash
    ollama serve
    ollama pull moondream
@@ -114,186 +161,128 @@ It features an **Embedded Hybrid Search Engine** that fuses semantic vectors and
 ## 📦 Installation
 
 ```powershell
-# 1. Clone the repository
+# 1. Clone
 git clone https://github.com/ss-sevesh/reeltoreal.git
 cd reeltoreal
 
-# 2. Install Node dependencies (for React Web Dashboard & Express backend)
+# 2. Install Python dependencies
+pip install -r requirements.txt
+pip install fastapi groq ddgs
+
+# 3. Install Node dependencies (React frontend)
 npm install
 
-# 3. (Optional) Install Python pipeline dependencies (for CLI commands & FastEmbed)
-pip install -r requirements.txt
-
 # 4. Configure environment
-copy .env.example .env        # On macOS/Linux: cp .env.example .env
+copy .env.example .env
+```
+
+Then edit `.env` with your settings:
+
+```env
+DATA_DIR=./data
+VAULT_DIR=./vault
+
+WHISPER_MODEL=distil-large-v3
+WHISPER_DEVICE=cuda          # or "cpu" if no GPU
+WHISPER_COMPUTE_TYPE=int8
+
+OLLAMA_HOST=http://localhost:11434
+OLLAMA_VLM_MODEL=moondream
+OLLAMA_LLM_MODEL=qwen2.5:1.5b
+
+FRAME_INTERVAL_SECONDS=7
+
+# Optional: enables Groq Llama 3.3 70B + live web comparison
+GROQ_API_KEY=gsk_xxxxxxxxxxxx
+GROQ_MODEL=llama-3.3-70b-versatile
 ```
 
 ---
 
-## 🖥️ Web Application Dashboard (React + Vite)
+## ▶️ Running the Application
 
-ReelToReal includes a full dark-mode interactive web dashboard:
+### Start Both Servers
 
+**Terminal 1 — Python AI Backend (port 8000):**
+```powershell
+python -m uvicorn server:app --host 0.0.0.0 --port 8000
+```
+
+**Terminal 2 — React Frontend (port 3000):**
 ```powershell
 npm run dev
 ```
-*Access the dashboard at `http://localhost:3000` in your browser.*
 
-For production build:
-```powershell
-npm run build
-npm start
-```
-
-### Dashboard Capabilities:
-1. 🔍 **Instant Hybrid Search**: Type any query or scene description to retrieve matched reels, scores, exact timecode pills (e.g. `[CAPTION @ 14s]`), and live Obsidian markdown previews.
-2. 💬 **Ask AI (RAG Chat with Ollama)**: Ask questions over your vault in plain English. Local `qwen2.5:1.5b` answers strictly using your notes and provides clickable source cards with original reel URLs.
-3. ⚡ **Process New Video**: Paste an Instagram Reel or YouTube Shorts URL, click **Process Video**, and watch live progress bars as it downloads, transcribes, captions, generates notes, and indexes.
-4. 🗄️ **Vault Explorer**: Browse all indexed reels, inspect tags and categories, and read generated notes with embedded timestamps.
-5. 🩺 **Pipeline & Model Diagnostics**: Real-time health check testing local Ollama connection, Qwen2.5 LLM, Moondream VLM, FastEmbed chunks, and vault storage.Chat)**: Ask questions over your vault in plain English. `qwen2.5:1.5b` answers strictly using your notes and provides clickable source cards with original reel URLs.
-3. ⚡ **Process New Video**: Paste an Instagram Reel or YouTube Shorts URL, click **Process Video**, and watch live progress bars as it downloads, transcribes, captions, generates notes, and indexes.
-4. 🗄️ **Vault Explorer**: Browse all indexed reels, inspect tags and categories, and read generated notes with embedded timestamps.
-5. 🩺 **Pipeline & Model Diagnostics**: One-click health check testing Ollama server connection, Moondream VLM, Whisper STT, FFmpeg, and Qdrant storage.
+Open **[http://localhost:3000](http://localhost:3000)** in your browser.
 
 ---
 
-## 💻 CLI Usage Guide
+## 💻 CLI Usage
 
-ReelToReal provides a modular CLI for running the full pipeline or individual stages:
+Run the full pipeline or individual stages via CLI:
 
-### 1. Process a Video (End-to-End)
-Downloads, transcribes audio, captions frames, generates an Obsidian note, and indexes into both SQLite FTS5 and Qdrant:
 ```powershell
-python -m src.cli process "https://www.youtube.com/watch?v=jNQXAC9IVRw"
-```
+# Process a video end-to-end (download → transcribe → caption → note → index)
+python -m src.cli process "https://youtube.com/shorts/Edl-l88L-C4"
 
-### 2. Hybrid Instant Search (Zero LLM Overhead)
-Find relevant reels, specific scenes, and exact timestamps in milliseconds:
-```powershell
-python -m src.cli search "safari animals with long trunks"
-```
-**Output:**
-```text
-[Hybrid Search] Query: 'safari animals with long trunks'
-Searching via Qdrant Dense Vectors + SQLite FTS5 (Zero LLM delay)...
+# Hybrid search (zero LLM overhead)
+python -m src.cli search "english restaurant food ordering"
 
-  [1] Elephants (animal) - Match Score: 66.5%
-       Top Moment: [TRANSCRIPT @ 4.0s -> 14.0s]
-       Excerpt:    Elephants spoken audio [4.0s -> 14.0s]: The cool thing about these guys is that they have really, really, really long fronts, and that's cool.
-       URL:        https://www.youtube.com/watch?v=jNQXAC9IVRw
-       Note:       vault/Notes/jNQXAC9IVRw_Elephants.md
-```
+# Ask a natural language question (RAG)
+python -m src.cli ask "What food was ordered in the restaurant reel?"
 
-Search for a visual scene:
-```powershell
-python -m src.cli search "smiling guy standing near fence"
-```
-**Output:**
-```text
-  [1] Elephants (animal) - Match Score: 67.2%
-       Top Moment: [CAPTION @ 14s]
-       Excerpt:    Elephants visual scene at 14s: In the image, a young man is standing in front of a fence, wearing a blue jacket and a red and black jacket. He is looking directly at the camera with a smile on his face...
-```
-
-Filter by category:
-```powershell
-python -m src.cli search "outdoor adventure" --category travel
-```
-
----
-
-### 3. Ask Questions (Natural Language RAG)
-Ask plain-English questions over your saved video knowledge vault:
-```powershell
-python -m src.cli ask "What was the young man wearing in front of the elephants?"
-```
-**Output:**
-```text
-[Ask] "What was the young man wearing in front of the elephants?"
-Searching vault & thinking (Ollama LLM)...
-
-============================================================
-The young man was wearing a red jacket and a blue shirt in front of the elephants.
-============================================================
-
-Referenced Reels:
-  - Elephants (animal)
-    URL:  https://www.youtube.com/watch?v=jNQXAC9IVRw
-    Note: vault/Notes/jNQXAC9IVRw_Elephants.md
-```
-
----
-
-### 4. Granular Pipeline Commands
-
-Run any pipeline stage independently:
-```powershell
-# Ingest video + sample frames + extract audio
+# Run individual stages
 python -m src.cli ingest "<URL>"
-
-# Transcribe audio with Whisper
 python -m src.cli transcribe "<VIDEO_ID>"
-
-# Caption sampled frames with Moondream VLM
-python -m src.cli caption "<VIDEO_ID>" --max-frames 5
-
-# Generate Obsidian markdown note
+python -m src.cli caption "<VIDEO_ID>"
 python -m src.cli notegen "<VIDEO_ID>" "<URL>"
-
-# Rebuild both SQLite FTS5 and Qdrant Vector indexes
 python -m src.cli index
 ```
 
 ---
 
-## 📁 Repository Layout
+## 🤖 How Situational Analysis Works
+
+When you ask a question like *"What is the cotton price now?"*:
 
 ```
-reeltoreal/
-├── server.ts            # Express backend with Vite middleware & REST endpoints
-├── server/
-│   └── vault.ts         # Vault parser, hybrid RRF search, and Ollama integration
-├── src/
-│   ├── App.tsx          # React application root & navigation
-│   ├── main.tsx         # React DOM entrypoint
-│   ├── types.ts         # TypeScript data contracts & vault schemas
-│   ├── services/
-│   │   └── api.ts       # Centralized API service for chat, search, notes, diagnostics
-│   └── components/      # UI components and view pages (Search, Chat, Ingest, Vault, Diagnostics)
-├── vault/
-│   ├── Notes/           # Obsidian markdown notes (.md) with YAML frontmatter
-│   ├── Videos/          # Saved video files
-│   └── Attachments/     # Saved assets & figures
-├── data/                # Intermediate working files (gitignored)
-├── .env                 # Environment configuration (Ollama host & models)
-├── .env.example         # Configuration template
-├── package.json         # Node scripts & dependencies
-├── vite.config.ts       # Vite bundler configuration
-├── tsconfig.json        # TypeScript configuration
-├── LICENSE              # MIT License
-└── README.md
+User Question
+     │
+     ├── [1] Vault RAG: Retrieves stored reel chunk
+     │         → "Reel (Aug 2026): Cotton is ₹18/kg"
+     │
+     ├── [2] Live Web Search (DuckDuckGo)
+     │         → "Today (Sep 2026): Cotton rate is ₹24/kg"
+     │
+     └── [3] Groq Llama 3.3 70B (or Ollama fallback)
+               → "The reel from last month mentioned ₹18/kg.
+                  As of today, the market rate is ₹24/kg —
+                  a 33% increase since the reel was saved."
 ```
 
 ---
 
-## 🗺️ Development Roadmap
+## 🗺️ Roadmap
 
-- [x] **Phase 1: Ingestion & Perception Pipeline** (Video metadata, audio transcriptions, frame captioning)
-- [x] **Phase 2: Note Generation & Obsidian Vault** (`qwen2.5` LLM fusion -> Obsidian vault notes)
-- [x] **Phase 3: Lexical & Vector Indexing** (FastEmbed dense vectors + SQLite lexical BM25 matching)
-- [x] **Phase 4: Hybrid RRF Fusion Engine** (Dense + Sparse Reciprocal Rank Fusion)
-- [x] **Phase 5: Ollama Local AI Stack** (Local `qwen2.5:1.5b` grounded Q&A + `moondream` scene perception)
-- [x] **Phase 6: Cinematic React Web Dashboard** (React 18 + TailwindCSS + Vite + Express UI)
-- [ ] **Phase 7: Performance Polish & Multi-video Batch Importer**
+- [x] Multimodal ingestion pipeline (Whisper STT + Moondream VLM)
+- [x] Obsidian-compatible markdown vault notes
+- [x] Hybrid RRF search (Qdrant + SQLite FTS5)
+- [x] Grounded RAG with local Ollama
+- [x] Live real-time web context (DuckDuckGo)
+- [x] Situational comparison analysis (Groq Llama 3.3 70B)
+- [x] React + Vite cinematic web dashboard
+- [ ] Multi-video batch processing queue
+- [ ] Instagram private Reel support (cookie auth)
+- [ ] Mobile-responsive UI
 
 ---
 
 ## 📜 License
 
-This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
+MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
 ## 👤 Author
 
-Developed by **[ss-sevesh](https://github.com/ss-sevesh)**. Contributions and feedback are welcome!
+Built by **[ss-sevesh](https://github.com/ss-sevesh)**. Contributions and feedback are welcome!
