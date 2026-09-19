@@ -1,0 +1,6 @@
+{
+  "name": "ReelToReal",
+  "description": "Turn saved Instagram Reels and YouTube Shorts into a timestamp-pinpointed, hybrid-searchable knowledge vault.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
