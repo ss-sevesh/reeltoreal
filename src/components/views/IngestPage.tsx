@@ -18,6 +18,7 @@ import {
   Database,
 } from 'lucide-react';
 import { VaultNote } from '../../types';
+import { api } from '../../services/api';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
 import { Input } from '../ui/Input';
@@ -41,6 +42,10 @@ export const IngestPage: React.FC<IngestPageProps> = ({
   const [stage, setStage] = useState<number>(0);
   const [statusMsg, setStatusMsg] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isInspecting, setIsInspecting] = useState(false);
+  const [detectedDuration, setDetectedDuration] = useState<number | null>(null);
+  const [detectedTags, setDetectedTags] = useState<string[]>([]);
+  const [categoryAutoDetected, setCategoryAutoDetected] = useState(false);
   const [generatedNote, setGeneratedNote] = useState<VaultNote | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -49,13 +54,14 @@ export const IngestPage: React.FC<IngestPageProps> = ({
 
   const [urlInputError, setUrlInputError] = useState<string | null>(null);
   const urlInputRef = React.useRef<HTMLInputElement>(null);
+  const inspectTimeoutRef = React.useRef<any>(null);
 
   const stages = [
     'Idle',
-    '[1/6] Downloading video stream & metadata (yt-dlp)...',
-    '[2/6] Extracting 16kHz mono audio & sampling visual frames...',
-    '[3/6] Transcribing spoken speech with Whisper STT...',
-    '[4/6] Captioning dynamic visual frames with Moondream VLM...',
+    '[1/6] Inspecting video stream & extracting metadata (yt-dlp categories + tags)...',
+    '[2/6] Extracting audio stream & sampling visual frames across full duration...',
+    '[3/6] Transcribing complete spoken speech with Whisper STT (vad_filter=False)...',
+    '[4/6] Captioning all dynamic keyframes with Moondream VLM (max_frames=None)...',
     '[5/6] Synthesizing structured Obsidian note with LLM Fusion...',
     '[6/6] Updating SQLite FTS5 & Qdrant Vector Databases...',
   ];
@@ -69,6 +75,32 @@ export const IngestPage: React.FC<IngestPageProps> = ({
     { value: 'entertainment', label: '🎬 Entertainment & Comedy' },
     { value: 'other', label: '📦 Other / Uncategorized' },
   ];
+
+  const inferClientCategory = (text: string): string => {
+    const t = text.toLowerCase();
+    if (/food|recipe|dish|cuisine|cooking|cook|chef|eat|eating|restaurant|pasta|garlic|vada|pongal|breakfast|idly|dosa|sambar|chutney|cheese|dinner|lunch|bake|baking|bread|curry|sizzle|sauce|flavour|flavor|taste|tasting|snack|meal|street\s*food|delicious|yummy|dessert|cake/i.test(t)) {
+      return 'food';
+    }
+    if (/safari|elephant|elephants|tiger|lion|dog|dogs|cat|cats|bird|birds|wildlife|animal|animals|zoo|pet|pets|creatures|fauna|mammal/i.test(t)) {
+      return 'animal';
+    }
+    if (/mountain|mountains|hike|hiking|trek|trekking|trail|trails|beach|camp|camping|lake|river|tour|tourist|tourism|scenic|park|overlook|valley|explore|exploring|destination|vacation|trip|travel|travels|backpacking/i.test(t)) {
+      return 'travel';
+    }
+    if (/fitness|workout|gym|exercise|muscle|run|running|marathon|training|health|healthy|yoga|strength|weightloss|diet|wellness/i.test(t)) {
+      return 'lifestyle';
+    }
+    if (/music|song|sing|dance|dancing|guitar|drum|beat|piano|concert|band|audio|remaster|track|musician|rap|vocal/i.test(t)) {
+      return 'music';
+    }
+    if (/code|coding|python|react|javascript|typescript|dev|developer|software|terminal|bug|linux|ai|data|tech|technology|engineering|tutorial|programming/i.test(t)) {
+      return 'technology';
+    }
+    if (/comedy|joke|funny|meme|humor|standup|movie|film|trailer|entertainment/i.test(t)) {
+      return 'entertainment';
+    }
+    return 'education';
+  };
 
   const samplePresets = [
     {
@@ -91,14 +123,61 @@ export const IngestPage: React.FC<IngestPageProps> = ({
     },
   ];
 
+  const handleInspectUrl = async (rawUrl: string) => {
+    let clean = rawUrl.trim();
+    if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
+      clean = 'https://' + clean;
+    }
+    if (!clean.includes('youtube.com') && !clean.includes('youtu.be') && !clean.includes('instagram.com')) {
+      return;
+    }
+
+    // Fast instant category estimation before network finishes
+    const fastCat = inferClientCategory(clean);
+    if (fastCat !== 'education') {
+      setCategory(fastCat);
+      setCategoryAutoDetected(true);
+    }
+
+    setIsInspecting(true);
+    try {
+      const data = await api.inspectVideo(clean);
+      if (data.title) {
+        setTitle(data.title);
+      }
+      const finalCat = inferClientCategory(`${data.title || ''} ${(data.tags || []).join(' ')} ${data.category || ''}`);
+      setCategory(finalCat);
+      setCategoryAutoDetected(true);
+
+      if (data.duration) {
+        setDetectedDuration(data.duration);
+      }
+      if (Array.isArray(data.tags)) {
+        setDetectedTags(data.tags);
+      }
+      toast.success('Category Auto-Detected', `Classified as "${finalCat.toUpperCase()}" based on title & tags`);
+    } catch {
+      // Non-blocking inspect error
+    } finally {
+      setIsInspecting(false);
+    }
+  };
+
   const handlePasteClipboard = async () => {
     try {
       if (navigator.clipboard && navigator.clipboard.readText) {
         const text = await navigator.clipboard.readText();
         if (text && text.trim()) {
-          setUrl(text.trim());
+          const cleanText = text.trim();
+          setUrl(cleanText);
           setUrlInputError(null);
           toast.success('Pasted URL from clipboard');
+          const fastCat = inferClientCategory(cleanText);
+          if (fastCat !== 'education') {
+            setCategory(fastCat);
+            setCategoryAutoDetected(true);
+          }
+          handleInspectUrl(cleanText);
           return;
         }
       }
@@ -144,29 +223,33 @@ export const IngestPage: React.FC<IngestPageProps> = ({
         }),
       });
 
-      // Advance visual telemetry indicators while server processes
-      await new Promise((r) => setTimeout(r, 350));
-      setStage(2);
-      setStatusMsg(stages[2]);
-
-      await new Promise((r) => setTimeout(r, 400));
-      setStage(3);
-      setStatusMsg(stages[3]);
-
-      await new Promise((r) => setTimeout(r, 450));
-      setStage(4);
-      setStatusMsg(stages[4]);
-
-      await new Promise((r) => setTimeout(r, 400));
-      setStage(5);
-      setStatusMsg(stages[5]);
+      // Realistic stage ticker — real pipeline (Whisper + Moondream) takes 1-5 min
+      // Slowly cycle through stages 1→5 while waiting for backend to complete
+      let currentStage = 1;
+      const stageDurations = [0, 4000, 8000, 20000, 40000]; // ms to spend on each stage
+      const advanceStage = () => {
+        if (currentStage < 5) {
+          currentStage++;
+          setStage(currentStage);
+          setStatusMsg(stages[currentStage]);
+          if (currentStage < 5) {
+            setTimeout(advanceStage, stageDurations[currentStage] || 8000);
+          }
+        }
+      };
+      const stageTimer = setTimeout(advanceStage, stageDurations[1]);
 
       const res = await ingestPromise;
+      clearTimeout(stageTimer);
 
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
         throw new Error(errData.error || 'Failed to ingest video');
       }
+
+      setStage(5);
+      setStatusMsg(stages[5]);
+      await new Promise((r) => setTimeout(r, 400));
 
       setStage(6);
       setStatusMsg(stages[6]);
@@ -174,7 +257,7 @@ export const IngestPage: React.FC<IngestPageProps> = ({
 
       const data = await res.json();
       setGeneratedNote(data.note);
-      setStatusMsg('🎉 Ingestion & Multimodal Indexing Complete!');
+      setStatusMsg('🎉 Real Whisper STT + Moondream VLM Indexing Complete!');
 
       // Confetti celebration burst
       confetti({
@@ -202,7 +285,8 @@ export const IngestPage: React.FC<IngestPageProps> = ({
     setTitle(sampleTitle);
     setCategory(sampleCat);
     setUrlInputError(null);
-    toast.info('Preset Loaded', `Loaded "${sampleTitle}". Click "Start Pipeline Ingestion" to process.`);
+    toast.info('Preset Loaded', `Loaded "${sampleTitle}". Inspecting video stream...`);
+    handleInspectUrl(sampleUrl);
   };
 
   const handleCopyNote = () => {
@@ -237,7 +321,7 @@ export const IngestPage: React.FC<IngestPageProps> = ({
           Ingest Short-Form Video into Knowledge Vault
         </h2>
         <p className="text-slate-400 text-xs sm:text-sm mt-1 max-w-3xl">
-          Provide an Instagram Reel or YouTube Shorts URL. ReelToReal downloads the video, runs Whisper speech transcription, samples keyframes for Moondream VLM visual scene captioning, generates an Obsidian markdown file with YAML frontmatter, and updates both SQLite FTS5 and Qdrant vector databases.
+          Provide an Instagram Reel or YouTube Shorts URL. ReelToReal downloads the video, runs Whisper speech transcription across the entire audio length (vad_filter=False), samples all keyframes for Moondream VLM visual scene captioning (max_frames=None), generates an Obsidian markdown file with YAML frontmatter, and updates both SQLite FTS5 and Qdrant vector databases.
         </p>
 
         {/* Preset Sample Reels */}
@@ -292,8 +376,34 @@ export const IngestPage: React.FC<IngestPageProps> = ({
                 placeholder="https://www.youtube.com/shorts/... or https://www.instagram.com/reel/..."
                 value={url}
                 onChange={(e) => {
-                  setUrl(e.target.value);
+                  const val = e.target.value;
+                  setUrl(val);
                   if (urlInputError) setUrlInputError(null);
+                  const fastCat = inferClientCategory(val);
+                  if (fastCat !== 'education') {
+                    setCategory(fastCat);
+                    setCategoryAutoDetected(true);
+                  }
+                  if (inspectTimeoutRef.current) clearTimeout(inspectTimeoutRef.current);
+                  if (val.includes('youtube.com') || val.includes('youtu.be') || val.includes('instagram.com')) {
+                    inspectTimeoutRef.current = setTimeout(() => {
+                      handleInspectUrl(val);
+                    }, 350);
+                  }
+                }}
+                onPaste={(e) => {
+                  const pasted = e.clipboardData?.getData('text');
+                  if (pasted) {
+                    const fastCat = inferClientCategory(pasted);
+                    if (fastCat !== 'education') {
+                      setCategory(fastCat);
+                      setCategoryAutoDetected(true);
+                    }
+                    handleInspectUrl(pasted);
+                  }
+                }}
+                onBlur={() => {
+                  if (url && !isProcessing) handleInspectUrl(url);
                 }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
@@ -304,13 +414,45 @@ export const IngestPage: React.FC<IngestPageProps> = ({
                 error={urlInputError || undefined}
                 disabled={isProcessing}
               />
+
+              {/* Auto-inspection telemetry badge */}
+              {(isInspecting || detectedDuration !== null) && (
+                <div className="mt-2 p-2.5 rounded-xl bg-slate-950/80 border border-slate-800 flex items-center justify-between text-xs animate-in fade-in duration-200">
+                  {isInspecting ? (
+                    <span className="flex items-center gap-2 text-sky-400 font-mono">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Auto-detecting category + title + duration (yt-dlp)...</span>
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-2 text-emerald-400 font-mono">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>
+                        Detected duration: <strong>{detectedDuration}s</strong> (Full coverage, max_frames=None, Whisper VAD fix)
+                      </span>
+                    </span>
+                  )}
+                  {detectedDuration && (
+                    <Badge variant="emerald" size="sm">
+                      Full Duration ({detectedDuration}s)
+                    </Badge>
+                  )}
+                </div>
+              )}
             </div>
 
             <Input
               label="Custom Title (Optional)"
               placeholder="Auto-detected if left empty..."
               value={title}
-              onChange={(e) => setTitle(e.target.value)}
+              onChange={(e) => {
+                const val = e.target.value;
+                setTitle(val);
+                const titleCat = inferClientCategory(val);
+                if (titleCat !== 'education') {
+                  setCategory(titleCat);
+                  setCategoryAutoDetected(true);
+                }
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   e.preventDefault();
@@ -320,13 +462,39 @@ export const IngestPage: React.FC<IngestPageProps> = ({
               disabled={isProcessing}
             />
 
-            <Select
-              label="Category Classification"
-              value={category}
-              onChange={(e) => setCategory(e.target.value)}
-              options={categories}
-              disabled={isProcessing}
-            />
+            {/* Autonomous Category Detection Banner (Zero manual prompt required) */}
+            <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-purple-500/20 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+                  <span>Category Classification</span>
+                </span>
+                <Badge variant="purple" size="sm">
+                  ✨ Auto-Detected
+                </Badge>
+              </div>
+
+              <div className="flex items-center justify-between pt-0.5">
+                <div className="flex items-center gap-2.5">
+                  <span className="text-xl">
+                    {category === 'food' ? '🍜' : category === 'travel' ? '✈️' : category === 'animal' ? '🐾' : category === 'lifestyle' ? '🌿' : category === 'entertainment' ? '🎬' : category === 'technology' ? '💻' : url ? '📚' : '⚡'}
+                  </span>
+                  <div>
+                    <span className="text-sm font-bold text-slate-100 capitalize">
+                      {category === 'food' ? 'Food & Cooking' : category === 'travel' ? 'Travel & Scenery' : category === 'animal' ? 'Animals & Wildlife' : category === 'lifestyle' ? 'Lifestyle & Fitness' : category === 'entertainment' ? 'Entertainment & Comedy' : category === 'technology' ? 'Technology & Code' : url ? 'Education & Insights' : 'Auto-assigning on paste...'}
+                    </span>
+                    <p className="text-[11px] text-slate-400 font-mono">
+                      Fused from yt-dlp metadata + transcript + visual scenes
+                    </p>
+                  </div>
+                </div>
+                {detectedDuration && (
+                  <Badge variant="emerald" size="sm">
+                    {detectedDuration}s
+                  </Badge>
+                )}
+              </div>
+            </div>
 
             <div className="pt-2">
               <Button

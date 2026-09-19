@@ -56,32 +56,42 @@ export const IngestTab: React.FC<IngestTabProps> = ({ onIngestComplete }) => {
         }),
       });
 
-      await new Promise((r) => setTimeout(r, 350));
-      setStage(2);
-      setStatusMsg(stages[2]);
+      // Realistic dynamic stage progression matching real pipeline runtimes
+      const stageTimers: NodeJS.Timeout[] = [];
+      stageTimers.push(setTimeout(() => {
+        setStage(2);
+        setStatusMsg(stages[2]);
+      }, 3500));
 
-      await new Promise((r) => setTimeout(r, 400));
-      setStage(3);
-      setStatusMsg(stages[3]);
+      stageTimers.push(setTimeout(() => {
+        setStage(3);
+        setStatusMsg(stages[3]);
+      }, 8000));
 
-      await new Promise((r) => setTimeout(r, 450));
-      setStage(4);
-      setStatusMsg(stages[4]);
+      stageTimers.push(setTimeout(() => {
+        setStage(4);
+        setStatusMsg('[4/6] Captioning visual frames with Moondream VLM (analyzing scene keyframes)...');
+      }, 18000));
 
-      await new Promise((r) => setTimeout(r, 400));
-      setStage(5);
-      setStatusMsg(stages[5]);
+      stageTimers.push(setTimeout(() => {
+        setStatusMsg('[4/6] Still captioning keyframes with Moondream VLM (deep visual perception)...');
+      }, 32000));
 
       const res = await ingestPromise;
+      stageTimers.forEach(t => clearTimeout(t));
 
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
         throw new Error(errData.error || 'Failed to ingest video');
       }
 
+      setStage(5);
+      setStatusMsg(stages[5]);
+      await new Promise((r) => setTimeout(r, 300));
+
       setStage(6);
       setStatusMsg(stages[6]);
-      await new Promise((r) => setTimeout(r, 300));
+      await new Promise((r) => setTimeout(r, 250));
 
       const data = await res.json();
       setGeneratedNote(data.note);

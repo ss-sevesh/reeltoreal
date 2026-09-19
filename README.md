@@ -2,13 +2,11 @@
 
 > **Turn saved Instagram Reels and YouTube Shorts into a searchable, timestamp-pinpointed local knowledge vault.**  
 > *100% Local • Zero Cloud APIs • Embedded Qdrant Vector Search • Obsidian Compatible*
-
----
-
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![Qdrant Embedded](https://img.shields.io/badge/Vector_DB-Qdrant_Embedded-red.svg)](https://qdrant.tech/)
+[![Node.js 18+](https://img.shields.io/badge/Node.js-18+-green.svg)](https://nodejs.org/)
+[![React 18](https://img.shields.io/badge/React-18-blue.svg)](https://react.dev/)
+[![Vite](https://img.shields.io/badge/Vite-6-646CFF.svg)](https://vitejs.dev/)
 [![Ollama](https://img.shields.io/badge/Local_AI-Ollama-black.svg)](https://ollama.com)
-[![Whisper STT](https://img.shields.io/badge/STT-faster--whisper-green.svg)](https://github.com/SYSTRAN/faster-whisper)
+[![Qdrant Hybrid](https://img.shields.io/badge/Vector_DB-Qdrant_Hybrid-red.svg)](https://qdrant.tech/)
 [![Obsidian Ready](https://img.shields.io/badge/Vault-Obsidian_Markdown-purple.svg)](https://obsidian.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -20,7 +18,7 @@ We all save dozens of insightful Instagram Reels and YouTube Shorts — recipes,
 
 **ReelToReal** solves this by downloading videos, listening to what is spoken (**Whisper STT**), looking at what is shown (**Moondream VLM**), and structuring everything into an **Obsidian Markdown Vault**.
 
-It features an **Embedded Qdrant Hybrid Search Engine** that fuses semantic vectors and exact lexical matching so you can find specific video moments in **under 200 milliseconds** — with **zero LLM overhead**!
+It features an **Embedded Hybrid Search Engine** that fuses semantic vectors and exact lexical matching so you can find specific video moments in **under 200 milliseconds** — with **zero LLM overhead**!
 
 ---
 
@@ -30,13 +28,13 @@ It features an **Embedded Qdrant Hybrid Search Engine** that fuses semantic vect
 - 👁️ **Visual Scene Captioning**: Uses `moondream` (via local Ollama) to caption dynamically sampled frames every 7 seconds, indexing objects, actions, and scenes.
 - 📓 **Obsidian-Ready Knowledge Vault**: Automatically generates clean `.md` files in `vault/Notes/` with YAML frontmatter, categorized tags, places, objects, and summary sections.
 - ⚡ **Zero-LLM Hybrid Search (Dense + Sparse)**:
-  - **Dense Vectors**: Embedded `Qdrant` + `FastEmbed` (`bge-small-en-v1.5`) matches abstract concepts and synonyms.
-  - **Sparse Lexical**: `SQLite FTS5` (BM25) matches exact words, names, and phrases.
+  - **Dense Vectors**: Embedded `Qdrant` + FastEmbed semantics matches abstract concepts and synonyms.
+  - **Sparse Lexical**: BM25 inverted lexical indexing matches exact words, names, and phrases.
   - **Reciprocal Rank Fusion (RRF)**: Merges both ranking signals for industry-grade retrieval.
 - ⏱️ **Timestamp Pinpointing**: Search results don't just return a video — they tell you the exact moment (e.g. `[CAPTION @ 14s]` or `[TRANSCRIPT @ 4.0s -> 14.0s]`).
-- 🤖 **Grounded Question Answering (RAG)**: Ask natural language questions with `python -m src.cli ask` or via the web chat. `qwen2.5:1.5b` synthesizes grounded answers citing source URLs and reel titles without hallucinating.
-- 🖥️ **Interactive Web Application (Streamlit)**: Complete dark-mode dashboard (`app.py`) featuring real-time hybrid search, RAG chat, live URL ingestion, Obsidian note inspector, and system diagnostics.
-- 🔒 **Zero Docker & Zero Cloud Setup**: Qdrant runs embedded directly on disk (`vault/qdrant_storage/`), and Ollama runs locally.
+- 🤖 **Grounded Question Answering (RAG)**: Ask natural language questions via web chat or API. `qwen2.5:1.5b` (via local Ollama) synthesizes grounded answers citing source URLs and reel titles without hallucinating.
+- 🖥️ **Interactive Web Application (React + Vite)**: Complete dark-mode cinematic dashboard featuring real-time hybrid search, Ollama RAG chat, live URL ingestion, Obsidian note inspector, and system diagnostics.
+- 🔒 **Zero Docker & Zero Cloud Setup**: Local storage runs embedded directly on disk (`vault/`), and Ollama runs locally on your machine.
 
 ---
 
@@ -61,8 +59,8 @@ It features an **Embedded Qdrant Hybrid Search Engine** that fuses semantic vect
                                     [ LLM Fusion: qwen2.5 ]
                                                 │
                                                 ▼
-                                  Obsidian Markdown Note (.md)
-                                 (YAML metadata, transcript, scenes)
+                                   Obsidian Markdown Note (.md)
+                                  (YAML metadata, transcript, scenes)
                                                 │
                        ┌────────────────────────┴────────────────────────┐
                        ▼                                                 ▼
@@ -76,7 +74,7 @@ It features an **Embedded Qdrant Hybrid Search Engine** that fuses semantic vect
                          ┌──────────────────────┴──────────────────────┐
                          ▼                                             ▼
              [ Instant Moment Search ]                     [ Grounded Q&A (RAG) ]
-              Sub-second, Zero LLM                          qwen2.5:1.5b Synthesis
+              Sub-second, Zero LLM                          qwen2.5:1.5b (Ollama)
 ```
 
 ---
@@ -94,7 +92,7 @@ It features an **Embedded Qdrant Hybrid Search Engine** that fuses semantic vect
 
 ## 🛠️ Prerequisites
 
-1. **Python 3.11+**
+1. **Node.js 18+** and **npm**
 2. **[FFmpeg](https://ffmpeg.org)** installed and available on your system `PATH`:
    ```powershell
    # Windows (via Chocolatey or Scoop)
@@ -106,6 +104,7 @@ It features an **Embedded Qdrant Hybrid Search Engine** that fuses semantic vect
    ```
 3. **[Ollama](https://ollama.com)** running locally:
    ```bash
+   ollama serve
    ollama pull moondream
    ollama pull qwen2.5:1.5b
    ```
@@ -119,31 +118,39 @@ It features an **Embedded Qdrant Hybrid Search Engine** that fuses semantic vect
 git clone https://github.com/ss-sevesh/reeltoreal.git
 cd reeltoreal
 
-# 2. Create and activate a virtual environment
-python -m venv venv
-.\venv\Scripts\Activate.ps1   # On macOS/Linux: source venv/bin/activate
+# 2. Install Node dependencies (for React Web Dashboard & Express backend)
+npm install
 
-# 3. Install dependencies
+# 3. (Optional) Install Python pipeline dependencies (for CLI commands & FastEmbed)
 pip install -r requirements.txt
 
-# 4. Initialize environment configuration
+# 4. Configure environment
 copy .env.example .env        # On macOS/Linux: cp .env.example .env
 ```
 
 ---
 
-## 🖥️ Web Application Dashboard (Streamlit)
+## 🖥️ Web Application Dashboard (React + Vite)
 
 ReelToReal includes a full dark-mode interactive web dashboard:
 
 ```powershell
-streamlit run app.py
+npm run dev
 ```
-*Access the dashboard at `http://localhost:8501` in your browser.*
+*Access the dashboard at `http://localhost:3000` in your browser.*
+
+For production build:
+```powershell
+npm run build
+npm start
+```
 
 ### Dashboard Capabilities:
 1. 🔍 **Instant Hybrid Search**: Type any query or scene description to retrieve matched reels, scores, exact timecode pills (e.g. `[CAPTION @ 14s]`), and live Obsidian markdown previews.
-2. 💬 **Ask AI (RAG Chat)**: Ask questions over your vault in plain English. `qwen2.5:1.5b` answers strictly using your notes and provides clickable source cards with original reel URLs.
+2. 💬 **Ask AI (RAG Chat with Ollama)**: Ask questions over your vault in plain English. Local `qwen2.5:1.5b` answers strictly using your notes and provides clickable source cards with original reel URLs.
+3. ⚡ **Process New Video**: Paste an Instagram Reel or YouTube Shorts URL, click **Process Video**, and watch live progress bars as it downloads, transcribes, captions, generates notes, and indexes.
+4. 🗄️ **Vault Explorer**: Browse all indexed reels, inspect tags and categories, and read generated notes with embedded timestamps.
+5. 🩺 **Pipeline & Model Diagnostics**: Real-time health check testing local Ollama connection, Qwen2.5 LLM, Moondream VLM, FastEmbed chunks, and vault storage.Chat)**: Ask questions over your vault in plain English. `qwen2.5:1.5b` answers strictly using your notes and provides clickable source cards with original reel URLs.
 3. ⚡ **Process New Video**: Paste an Instagram Reel or YouTube Shorts URL, click **Process Video**, and watch live progress bars as it downloads, transcribes, captions, generates notes, and indexes.
 4. 🗄️ **Vault Explorer**: Browse all indexed reels, inspect tags and categories, and read generated notes with embedded timestamps.
 5. 🩺 **Pipeline & Model Diagnostics**: One-click health check testing Ollama server connection, Moondream VLM, Whisper STT, FFmpeg, and Qdrant storage.
@@ -243,29 +250,26 @@ python -m src.cli index
 
 ```
 reeltoreal/
-├── app.py               # Streamlit Web Dashboard (Search, Chat, Ingestion, Explorer, Diagnostics)
+├── server.ts            # Express backend with Vite middleware & REST endpoints
+├── server/
+│   └── vault.ts         # Vault parser, hybrid RRF search, and Ollama integration
 ├── src/
-│   ├── ingest.py        # Video download via yt-dlp
-│   ├── audio.py         # 16kHz mono WAV extraction via ffmpeg
-│   ├── frames.py        # Dynamic frame sampling via OpenCV
-│   ├── transcribe.py    # faster-whisper speech-to-text
-│   ├── caption.py       # Ollama moondream VLM frame captioning
-│   ├── notegen.py       # LLM fusion (qwen2.5) -> Obsidian note
-│   ├── index.py         # SQLite FTS5 full-text indexing & parsing
-│   ├── vector_db.py     # Qdrant embedded client + FastEmbed chunking
-│   ├── search.py        # Hybrid Search (Qdrant + FTS5 + RRF)
-│   ├── answer.py        # Grounded RAG question answering
-│   ├── config.py        # Centralized path and model configuration
-│   └── cli.py           # Unified command-line interface
+│   ├── App.tsx          # React application root & navigation
+│   ├── main.tsx         # React DOM entrypoint
+│   ├── types.ts         # TypeScript data contracts & vault schemas
+│   ├── services/
+│   │   └── api.ts       # Centralized API service for chat, search, notes, diagnostics
+│   └── components/      # UI components and view pages (Search, Chat, Ingest, Vault, Diagnostics)
 ├── vault/
 │   ├── Notes/           # Obsidian markdown notes (.md) with YAML frontmatter
 │   ├── Videos/          # Saved video files
-│   ├── Attachments/     # Saved assets & figures
-│   ├── index.db         # SQLite FTS5 database (gitignored)
-│   └── qdrant_storage/  # Embedded Qdrant vector database (gitignored)
+│   └── Attachments/     # Saved assets & figures
 ├── data/                # Intermediate working files (gitignored)
+├── .env                 # Environment configuration (Ollama host & models)
 ├── .env.example         # Configuration template
-├── requirements.txt     # Python package requirements
+├── package.json         # Node scripts & dependencies
+├── vite.config.ts       # Vite bundler configuration
+├── tsconfig.json        # TypeScript configuration
 ├── LICENSE              # MIT License
 └── README.md
 ```
@@ -274,13 +278,13 @@ reeltoreal/
 
 ## 🗺️ Development Roadmap
 
-- [x] **Day 1: Ingestion Pipeline** (`yt-dlp` download, audio extraction, frame sampling)
-- [x] **Day 2: Multimodal Perception** (`faster-whisper` STT + `moondream` VLM captions)
-- [x] **Day 3: Note Generation** (`qwen2.5` LLM fusion -> Obsidian vault notes)
-- [x] **Day 4: Lexical Search Indexer** (`SQLite FTS5` with BM25 ranking)
-- [x] **Day 5: Hybrid RAG & Vector Engine** (Embedded `Qdrant` + `FastEmbed` + RRF fusion + `qwen2.5` Q&A)
-- [x] **Day 6: Streamlit Interactive UI** (`app.py` for web browsing, video playback, and chat)
-- [ ] **Day 7: Performance Polish & Multi-video Batch Importer**
+- [x] **Phase 1: Ingestion & Perception Pipeline** (Video metadata, audio transcriptions, frame captioning)
+- [x] **Phase 2: Note Generation & Obsidian Vault** (`qwen2.5` LLM fusion -> Obsidian vault notes)
+- [x] **Phase 3: Lexical & Vector Indexing** (FastEmbed dense vectors + SQLite lexical BM25 matching)
+- [x] **Phase 4: Hybrid RRF Fusion Engine** (Dense + Sparse Reciprocal Rank Fusion)
+- [x] **Phase 5: Ollama Local AI Stack** (Local `qwen2.5:1.5b` grounded Q&A + `moondream` scene perception)
+- [x] **Phase 6: Cinematic React Web Dashboard** (React 18 + TailwindCSS + Vite + Express UI)
+- [ ] **Phase 7: Performance Polish & Multi-video Batch Importer**
 
 ---
 

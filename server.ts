@@ -1,3 +1,4 @@
+import fs from 'fs';
 import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
@@ -11,11 +12,25 @@ import {
   hybridSearch,
   answerQuestion,
   ingestVideo,
+  checkOllamaHealth,
+  fetchVideoMetadata,
+  inferCategory,
+  parseNoteContent,
+  parseNoteFile,
 } from './server/vault';
+
+// Load .env configuration
+if (typeof (process as any).loadEnvFile === 'function') {
+  try {
+    (process as any).loadEnvFile();
+  } catch {
+    // .env not found or already loaded
+  }
+}
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = parseInt(process.env.PORT || '3000', 10);
 
   app.use(express.json({ limit: '10mb' }));
 
@@ -34,26 +49,25 @@ async function startServer() {
     const notes = getAllNotes();
     const stats = indexVault();
     const latency = Date.now() - t0;
-
-    const hasGeminiKey = Boolean(process.env.GEMINI_API_KEY);
+    const ollama = await checkOllamaHealth();
 
     res.json({
       ollama: {
-        online: true,
-        model: hasGeminiKey ? 'gemini-2.5-flash' : 'local-multimodal-engine',
-        latencyMs: Math.max(8, latency + 12),
+        online: ollama.online,
+        model: ollama.model,
+        latencyMs: Math.max(1, ollama.latencyMs),
       },
       vector_db: {
         active: true,
         chunks: stats.chunksCount,
         storagePath: 'vault/qdrant_storage',
-        latencyMs: Math.max(4, latency + 3),
+        latencyMs: Math.max(2, latency + 2),
       },
       fts_db: {
         active: true,
         records: stats.notesCount,
         storagePath: 'vault/index.db',
-        latencyMs: Math.max(2, latency + 1),
+        latencyMs: Math.max(1, latency + 1),
       },
       vault: {
         notesCount: notes.length,
@@ -107,11 +121,53 @@ async function startServer() {
     res.json({ success: true });
   });
 
-  // Hybrid Search (Dense + Sparse + RRF)
-  app.get('/api/search', (req, res) => {
-    const query = String(req.query.q || '').trim();
-    const category = req.query.category ? String(req.query.category) : null;
-    const limit = req.query.limit ? parseInt(String(req.query.limit), 10) : 6;
+  // Inspect video URL to auto-detect title, category, duration, and tags
+  app.post('/api/inspect', async (req, res) => {
+    const { url } = req.body;
+    if (!url || typeof url !== 'string') {
+      return res.status(400).json({ error: 'Valid video URL is required' });
+    }
+
+    // Try Python backend on port 8000 first if active
+    try {
+      const pyRes = await fetch('http://localhost:8000/api/inspect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url }),
+        signal: AbortSignal.timeout(6000),
+      });
+      if (pyRes.ok) {
+        const data: any = await pyRes.json();
+        // Smart category fusion: categories + tags + title
+        const smartCat = inferCategory(`${data.title || ''} ${(data.tags || []).join(' ')} ${data.category || ''} ${url}`);
+        return res.json({
+          ...data,
+          category: smartCat,
+        });
+      }
+    } catch {}
+
+    try {
+      const meta = await fetchVideoMetadata(url);
+      const smartCat = meta.category || inferCategory(`${meta.title} ${(meta.keywords || []).join(' ')} ${url}`);
+      res.json({
+        title: meta.title,
+        category: smartCat,
+        duration: meta.durationSeconds,
+        tags: meta.keywords || [],
+        source_url: url,
+      });
+    } catch (err: any) {
+      console.error('Inspect error:', err);
+      res.status(500).json({ error: err.message || 'Failed to inspect video' });
+    }
+  });
+
+  // Hybrid Search (Dense + Sparse + RRF) - GET & POST
+  const handleSearch = (req: express.Request, res: express.Response) => {
+    const query = String(req.query.q || req.body?.query || req.body?.q || '').trim();
+    const category = (req.query.category || req.body?.category) ? String(req.query.category || req.body?.category) : null;
+    const limit = (req.query.limit || req.body?.limit) ? parseInt(String(req.query.limit || req.body?.limit), 10) : 6;
 
     if (!query) {
       return res.json([]);
@@ -119,18 +175,40 @@ async function startServer() {
 
     const results = hybridSearch(query, category, limit);
     res.json(results);
-  });
+  };
+
+  app.get('/api/search', handleSearch);
+  app.post('/api/search', handleSearch);
 
   // Grounded Vault Chat (RAG)
   app.post('/api/chat', async (req, res) => {
-    const { query, history } = req.body;
+    const query = req.body?.query || req.body?.question;
+    const history = req.body?.history || [];
     if (!query || typeof query !== 'string') {
       return res.status(400).json({ error: 'Query is required' });
     }
 
+    // Try Python backend on port 8000 first if active
+    try {
+      const pyChat = await fetch('http://localhost:8000/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: query }),
+        signal: AbortSignal.timeout(30000),
+      });
+      if (pyChat.ok) {
+        const pyData = (await pyChat.json()) as any;
+        return res.json({
+          answer: pyData.answer || pyData.content || '',
+          sources: pyData.sources || [],
+          elapsedMs: pyData.elapsed_ms || 1200,
+        });
+      }
+    } catch {}
+
     const t0 = Date.now();
     try {
-      const response = await answerQuestion(query, history || []);
+      const response = await answerQuestion(query, history);
       const elapsedMs = Date.now() - t0;
       res.json({
         ...response,
@@ -142,24 +220,70 @@ async function startServer() {
     }
   });
 
-  // Ingest new video
-  app.post('/api/ingest', async (req, res) => {
+  // Ingest / Process new video — delegates to Python real pipeline (Whisper STT + Moondream VLM)
+  // Falls back to Node ingestVideo only if Python server is unreachable
+  const handleProcessVideo = async (req: express.Request, res: express.Response) => {
     const { url, title, category } = req.body;
     if (!url || typeof url !== 'string') {
       return res.status(400).json({ error: 'Valid video URL is required' });
     }
 
+    // ── PRIMARY: Python real pipeline (yt-dlp + Whisper + Moondream + notegen) ──
+    // This performs actual download, real audio transcription (faster-whisper),
+    // real visual frame captioning (Moondream via Ollama), and Obsidian note generation.
     try {
-      const note = await ingestVideo(url, title, category);
-      res.json({
-        success: true,
-        note,
+      const pyProcess = await fetch('http://localhost:8000/api/process', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url, category: category || null }),
+        // Allow up to 10 minutes for real download + Whisper + VLM captioning
+        signal: AbortSignal.timeout(600000),
       });
-    } catch (err: any) {
-      console.error('Ingest error:', err);
-      res.status(500).json({ error: err.message || 'Failed to ingest video' });
+      if (pyProcess.ok) {
+        const pyData: any = await pyProcess.json();
+        // Python wrote the note to the shared vault on disk — read it directly.
+        // This is more reliable than parsing pyData.note_content (avoids CRLF issues).
+        const sharedVaultNotes = path.join(process.cwd(), 'vault', 'Notes');
+        let parsedNote: any = null;
+        try {
+          const files = fs.readdirSync(sharedVaultNotes)
+            .filter((f: string) => f.startsWith(pyData.video_id + '_') && f.endsWith('.md'))
+            .map((f: string) => ({ f, mtime: fs.statSync(path.join(sharedVaultNotes, f)).mtimeMs }))
+            .sort((a: any, b: any) => b.mtime - a.mtime);
+          if (files.length > 0) {
+            parsedNote = parseNoteFile(path.join(sharedVaultNotes, files[0].f));
+          }
+        } catch {}
+        // Re-index vault so search picks up the new note
+        indexVault();
+        return res.json({
+          success: true,
+          note: parsedNote || parseNoteContent(pyData.note_content || '', pyData.video_id) || {
+            title: pyData.title || url,
+            rawContent: pyData.note_content || '',
+            category: category || 'other',
+            source_url: url,
+            video_id: pyData.video_id,
+          },
+        });
+      }
+      // Python returned a non-200 error — surface it
+      const errData: any = await pyProcess.json().catch(() => ({}));
+      console.error('[Ingest] Python pipeline returned error:', errData.detail || errData.error);
+      return res.status(500).json({ error: `Python pipeline error: ${errData.detail || errData.error || 'Unknown error'}` });
+    } catch (pyErr: any) {
+      if (pyErr?.name === 'TimeoutError') {
+        return res.status(504).json({ error: 'Pipeline timed out — video may be too long or Whisper/Moondream is slow on CPU.' });
+      }
+      console.error('[Ingest] Python server connection error:', pyErr.message);
+      return res.status(503).json({
+        error: `Python Multimodal Backend is unreachable: ${pyErr.message}. Ensure Python server is running on port 8000.`,
+      });
     }
-  });
+  };
+
+  app.post('/api/ingest', handleProcessVideo);
+  app.post('/api/process', handleProcessVideo);
 
   // ---------------------------------------------------------------------------
   // Vite Middleware Setup

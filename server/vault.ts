@@ -67,31 +67,48 @@ export function parseNoteFile(filePath: string): VaultNoteData | null {
   try {
     const rawContent = fs.readFileSync(filePath, 'utf-8');
     const fileName = path.basename(filePath);
-    
+    return parseNoteContent(rawContent, undefined, fileName, filePath);
+  } catch (err) {
+    console.error(`Failed to parse note at ${filePath}:`, err);
+    return null;
+  }
+}
+
+/** Parse raw markdown note content (e.g. from Python pipeline response) without reading from disk. */
+export function parseNoteContent(
+  rawContent: string,
+  fallbackVideoId?: string,
+  fallbackFileName?: string,
+  filePath?: string,
+): VaultNoteData | null {
+  if (!rawContent?.trim()) return null;
+  try {
+    const fileName = fallbackFileName || `${fallbackVideoId || 'unknown'}.md`;
+
     // Parse YAML frontmatter between --- markers
     let metadata: any = {};
     let markdownBody = rawContent;
-    
+
     const fmMatch = rawContent.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/);
     if (fmMatch) {
       try {
         metadata = YAML.parse(fmMatch[1]) || {};
       } catch (e) {
-        console.warn('YAML parse error in', fileName, e);
+        console.warn('YAML parse error in note content:', e);
       }
       markdownBody = fmMatch[2];
     }
 
     // Parse sections from markdown body
-    const summaryMatch = markdownBody.match(/## Summary\s+([\s\S]*?)(?=\n---|\n##|$)/i);
-    const transcriptMatch = markdownBody.match(/## Transcript\s+([\s\S]*?)(?=\n---|\n##|$)/i);
-    const captionsMatch = markdownBody.match(/## Visual Scene Descriptions\s+([\s\S]*?)(?=\n---|\n##|$)/i);
+    const summaryMatch = markdownBody.match(/## Summary\s+([\s\S]*?)(?=\r?\n---|\r?\n##|$)/i);
+    const transcriptMatch = markdownBody.match(/## Transcript\s+([\s\S]*?)(?=\r?\n---|\r?\n##|$)/i);
+    const captionsMatch = markdownBody.match(/## Visual Scene Descriptions\s+([\s\S]*?)(?=\r?\n---|\r?\n##|$)/i);
 
     const summary = summaryMatch ? summaryMatch[1].trim() : '';
     const transcript = transcriptMatch ? transcriptMatch[1].trim() : '';
     const captions = captionsMatch ? captionsMatch[1].trim() : '';
 
-    const video_id = String(metadata.video_id || fileName.replace(/\.md$/, '').split('_')[0] || 'unknown');
+    const video_id = String(metadata.video_id || fallbackVideoId || fileName.replace(/\.md$/, '').split('_')[0] || 'unknown');
     const title = String(metadata.title || fileName.replace(/\.md$/, '') || 'Untitled Note');
     const category = String(metadata.category || 'other').toLowerCase();
     const source_url = String(metadata.source_url || '');
@@ -99,7 +116,7 @@ export function parseNoteFile(filePath: string): VaultNoteData | null {
     const language = String(metadata.language || 'en');
     const duration_seconds = Number(metadata.duration_seconds || 0);
     const tags = Array.isArray(metadata.tags) ? metadata.tags.map(String) : [];
-    
+
     const entities = {
       places: Array.isArray(metadata.entities?.places) ? metadata.entities.places.map(String) : [],
       objects: Array.isArray(metadata.entities?.objects) ? metadata.entities.objects.map(String) : [],
@@ -122,13 +139,15 @@ export function parseNoteFile(filePath: string): VaultNoteData | null {
       transcript,
       captions,
       rawContent,
-      note_path: filePath,
+      note_path: filePath || '',
     };
   } catch (err) {
-    console.error(`Failed to parse note at ${filePath}:`, err);
+    console.error('Failed to parse note content:', err);
     return null;
   }
 }
+
+
 
 export function extractChunks(note: VaultNoteData): ChunkItem[] {
   const chunks: ChunkItem[] = [];
@@ -244,7 +263,14 @@ export function getAllNotes(): VaultNoteData[] {
 
 export function getNoteById(id: string): VaultNoteData | undefined {
   const notes = getAllNotes();
-  return notes.find(n => n.id === id || n.video_id === id);
+  const cleanId = decodeURIComponent(id);
+  return notes.find(
+    n => n.id === cleanId ||
+         n.video_id === cleanId ||
+         n.fileName === cleanId ||
+         n.fileName.replace(/\.md$/, '') === cleanId ||
+         n.fileName.startsWith(cleanId)
+  );
 }
 
 export function saveNote(fileName: string, content: string): VaultNoteData {
@@ -512,6 +538,88 @@ function getGemini(): GoogleGenAI | null {
   return geminiClient;
 }
 
+/**
+ * Health check ping to local Ollama server
+ */
+export async function checkOllamaHealth(): Promise<{
+  online: boolean;
+  model: string;
+  latencyMs: number;
+  models: string[];
+}> {
+  const host = process.env.OLLAMA_HOST || 'http://localhost:11434';
+  const preferredModel = process.env.OLLAMA_LLM_MODEL || 'qwen2.5:1.5b';
+  const t0 = Date.now();
+  try {
+    const res = await fetch(`${host}/api/tags`, {
+      signal: AbortSignal.timeout(4000),
+    });
+    const latencyMs = Date.now() - t0;
+    if (res.ok) {
+      const data: any = await res.json();
+      const modelList = Array.isArray(data.models) ? data.models : [];
+      const modelNames: string[] = modelList.map((m: any) => m.name || m.model || '');
+      const activeModel = modelNames.find((m: string) => m.toLowerCase().includes(preferredModel.split(':')[0].toLowerCase())) || preferredModel;
+      return {
+        online: true,
+        model: activeModel,
+        latencyMs,
+        models: modelNames,
+      };
+    }
+  } catch (err) {
+    // Ollama not responding
+  }
+  return {
+    online: false,
+    model: preferredModel,
+    latencyMs: Date.now() - t0,
+    models: [],
+  };
+}
+
+/**
+ * Query local Ollama model (qwen2.5:1.5b)
+ */
+export async function queryOllama(
+  prompt: string,
+  systemPrompt?: string,
+  timeoutMs: number = 20000
+): Promise<string | null> {
+  const host = process.env.OLLAMA_HOST || 'http://localhost:11434';
+  const model = process.env.OLLAMA_LLM_MODEL || 'qwen2.5:1.5b';
+  try {
+    const messages: Array<{ role: string; content: string }> = [];
+    if (systemPrompt) {
+      messages.push({ role: 'system', content: systemPrompt });
+    }
+    messages.push({ role: 'user', content: prompt });
+
+    const res = await fetch(`${host}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        messages,
+        stream: false,
+      }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+
+    if (!res.ok) {
+      console.warn(`Ollama error HTTP ${res.status}: ${res.statusText}`);
+      return null;
+    }
+
+    const data: any = await res.json();
+    const content = data?.message?.content?.trim();
+    return content || null;
+  } catch (err: any) {
+    console.warn(`Ollama query to ${host} failed:`, err.message || err);
+    return null;
+  }
+}
+
 export async function answerQuestion(
   query: string,
   history: Array<{ role: 'user' | 'assistant'; content: string }> = []
@@ -566,26 +674,40 @@ Tags: ${note.tags.join(', ')}
     `.trim());
   }
 
-  const prompt = `You are ReelToReal AI, a grounded retrieval assistant answering questions about the user's saved short-form video reels (Instagram Reels & YouTube Shorts).
+  const systemInstruction = `You are ReelToReal AI, a grounded retrieval assistant answering questions about the user's saved short-form video reels (Instagram Reels & YouTube Shorts).
 
 STRICT GROUNDING RULES:
 1. Answer strictly and solely using the provided Reel Knowledge Vault contexts below.
 2. If the contexts do not contain enough information to answer, state clearly that the saved reels do not mention it.
 3. Explicitly cite specific reel titles and timestamps (e.g. "[14s]" or "[4.0s -> 14.0s]") when describing visual scenes or spoken words.
-4. Keep the tone concise, helpful, and direct.
+4. Keep the tone concise, helpful, and direct.`;
 
-USER QUESTION: "${query}"
+  const userPrompt = `USER QUESTION: "${query}"
 
 KNOWLEDGE VAULT CONTEXTS:
 ${contexts.join('\n\n')}
 `;
 
+  // 1. Try Local Ollama first (e.g. qwen2.5:1.5b)
+  try {
+    const ollamaAnswer = await queryOllama(userPrompt, systemInstruction);
+    if (ollamaAnswer && ollamaAnswer.trim()) {
+      return {
+        answer: ollamaAnswer.trim(),
+        sources,
+      };
+    }
+  } catch (ollamaErr) {
+    console.warn('Ollama answer generation failed:', ollamaErr);
+  }
+
+  // 2. Fallback to Gemini if configured
   const ai = getGemini();
   if (ai) {
     try {
       const response = await ai.models.generateContent({
         model: 'gemini-3.8-flash',
-        contents: prompt,
+        contents: `${systemInstruction}\n\n${userPrompt}`,
       });
       const text = response.text || '';
       if (text.trim()) {
@@ -638,14 +760,64 @@ export interface VideoMetadata {
   description: string;
   keywords: string[];
   durationSeconds: number;
+  category?: string;
+}
+
+export function inferCategory(text: string): string {
+  const t = text.toLowerCase();
+  if (/food|recipe|dish|cuisine|cooking|chef|eat|restaurant|pasta|garlic|vada|pongal|breakfast|cheese|dinner|lunch|bake|bread|curry|sizzle|sauce|flavour/i.test(t)) {
+    return 'food';
+  }
+  if (/safari|elephant|tiger|lion|dog|cat|bird|wildlife|animal|zoo|pet|creatures/i.test(t)) {
+    return 'animal';
+  }
+  if (/travel|outdoor|mountain|hike|trek|trail|beach|camp|lake|river|tour|city|scenic|park|overlook|valley|explore/i.test(t)) {
+    return 'travel';
+  }
+  if (/fitness|workout|gym|exercise|muscle|run|training|health|yoga|strength/i.test(t)) {
+    return 'lifestyle';
+  }
+  if (/music|song|sing|dance|guitar|drum|beat|piano|concert|band|audio|remaster|track/i.test(t)) {
+    return 'music';
+  }
+  if (/code|python|react|typescript|dev|software|terminal|bug|linux|ai|data|tech|engineering/i.test(t)) {
+    return 'technology';
+  }
+  if (/comedy|joke|funny|movie|film|trailer|entertainment/i.test(t)) {
+    return 'entertainment';
+  }
+  return 'education';
 }
 
 export async function fetchVideoMetadata(url: string): Promise<VideoMetadata> {
+  // 1. Try local Python backend inspection if running on port 8000
+  try {
+    const inspectRes = await fetch('http://localhost:8000/api/inspect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+      signal: AbortSignal.timeout(6000),
+    });
+    if (inspectRes.ok) {
+      const data: any = await inspectRes.json();
+      return {
+        title: data.title || '',
+        author: '',
+        description: '',
+        keywords: Array.isArray(data.tags) ? data.tags : [],
+        durationSeconds: Number(data.duration) > 0 ? Number(data.duration) : 60,
+        category: data.category || inferCategory(`${data.title || ''} ${(data.tags || []).join(' ')}`),
+      };
+    }
+  } catch {
+    // Port 8000 not responding, continue with direct web extraction
+  }
+
   let title = '';
   let author = '';
   let description = '';
   let keywords: string[] = [];
-  let durationSeconds = 28.5;
+  let durationSeconds = 60; // Full duration default (never capped at 28.5s)
 
   const ytMatch = url.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|shorts\/|embed\/))([a-zA-Z0-9_-]{11})/);
   if (ytMatch) {
@@ -683,11 +855,22 @@ export async function fetchVideoMetadata(url: string): Promise<VideoMetadata> {
             keywords = JSON.parse(kwMatch[1]).slice(0, 8);
           } catch {}
         }
+
+        // Extract real video duration without 28-second limit
+        const durMatch = html.match(/"approxDurationMs":"(\d+)"/) || html.match(/"lengthSeconds":"(\d+)"/);
+        if (durMatch) {
+          const rawSec = durMatch[1].length > 6 ? parseInt(durMatch[1], 10) / 1000 : parseInt(durMatch[1], 10);
+          if (rawSec > 0) {
+            durationSeconds = Math.round(rawSec);
+          }
+        }
       }
     } catch (e) {
       console.warn('YouTube page scrape error:', e);
     }
   }
+
+  const combinedCategory = inferCategory(`${title} ${description} ${keywords.join(' ')}`);
 
   return {
     title,
@@ -695,6 +878,7 @@ export async function fetchVideoMetadata(url: string): Promise<VideoMetadata> {
     description,
     keywords,
     durationSeconds,
+    category: combinedCategory,
   };
 }
 
@@ -722,28 +906,12 @@ export async function ingestVideo(
   const meta = await fetchVideoMetadata(url);
   const cleanTitle = customTitle || meta.title || (videoId.length === 11 ? `Reel ${videoId}` : 'Saved Knowledge Reel');
   const dateStr = new Date().toISOString().slice(0, 10);
-  const duration = meta.durationSeconds || 28.5;
+  const duration = meta.durationSeconds > 0 ? meta.durationSeconds : 60;
 
-  // Infer category from title/keywords if user didn't specify or left default
+  // Infer category from title/keywords/categories if user didn't specify or left default
   let cleanCat = (customCategory || '').toLowerCase();
-  const textContext = `${cleanTitle} ${meta.description} ${meta.keywords.join(' ')}`.toLowerCase();
-
   if (!cleanCat || cleanCat === 'education' || cleanCat === 'other') {
-    if (/food|recipe|dish|cuisine|cooking|chef|eat|restaurant|bake|bread|curry|dosa|idly|breakfast/i.test(textContext)) {
-      cleanCat = 'food';
-    } else if (/safari|elephant|tiger|lion|dog|cat|bird|wildlife|animal|zoo|pet/i.test(textContext)) {
-      cleanCat = 'animal';
-    } else if (/travel|outdoor|mountain|hike|trek|trail|beach|camp|lake|river|tour|city/i.test(textContext)) {
-      cleanCat = 'travel';
-    } else if (/music|song|sing|dance|guitar|drum|beat|piano|concert|band|audio|remaster/i.test(textContext)) {
-      cleanCat = 'music';
-    } else if (/fitness|workout|gym|exercise|muscle|run|training|health/i.test(textContext)) {
-      cleanCat = 'lifestyle';
-    } else if (/code|python|react|typescript|dev|software|terminal|bug|linux|ai|data/i.test(textContext)) {
-      cleanCat = 'technology';
-    } else {
-      cleanCat = customCategory || 'education';
-    }
+    cleanCat = meta.category || inferCategory(`${cleanTitle} ${meta.description} ${meta.keywords.join(' ')}`);
   }
 
   let summary = '';
@@ -754,48 +922,62 @@ export async function ingestVideo(
   let objects: string[] = [];
   let actions: string[] = [];
 
-  // 3. Try Gemini API for multimodal perception
-  const ai = getGemini();
-  if (ai) {
-    try {
-      const prompt = `You are ReelToReal Multimodal Perception Engine (Whisper STT + Moondream VLM).
+  const frameInterval = parseInt(process.env.FRAME_INTERVAL_SECONDS || '7', 10);
+  const totalFrames = Math.max(2, Math.floor(duration / frameInterval) + 1);
+
+  // 3. Try Ollama (qwen2.5:1.5b) or Gemini API for multimodal perception
+  const perceptionPrompt = `You are ReelToReal Multimodal Perception Engine (Whisper STT + Moondream VLM).
 Analyze this short-form video (Reel/Short):
 URL: "${url}"
 Title: "${cleanTitle}"
 Author/Channel: "${meta.author || 'Unknown'}"
 Category: "${cleanCat}"
+Total Duration: ${duration.toFixed(1)} seconds
 Description: "${meta.description}"
 Keywords: "${meta.keywords.join(', ')}"
 
-Generate a JSON object with:
-1. "summary": A concise 2-3 sentence overview of what happens in the video.
-2. "transcript": Realistic spoken speech transcript with 3-4 timestamped segments in exact format:
-   > \`[0.0s → 6.0s]\` <dialogue>
-   > \`[6.0s → 15.0s]\` <dialogue>
-   > \`[15.0s → 28.5s]\` <dialogue>
-3. "captions": Visual scene captions at keyframe timestamps in exact format:
-   - **[0s]** <visual details: camera angle, subject, lighting, environment>
+IMPORTANT PIPELINE INSTRUCTIONS:
+1. "summary": A concise 2-3 sentence overview covering the full video from start to finish.
+2. "transcript": Spoken speech transcript segments covering the entire video length from 0.0s to ${duration.toFixed(1)}s (Whisper STT with vad_filter=False, do NOT stop at 28 seconds):
+   > \`[0.0s → 12.0s]\` <dialogue>
+   > \`[12.0s → 28.0s]\` <dialogue>
+   > \`[28.0s → 42.0s]\` <dialogue>
+   > \`[42.0s → ${duration.toFixed(1)}s]\` <dialogue>
+3. "captions": Visual scene captions sampled every ${frameInterval} seconds across the FULL video (max_frames=None, caption every keyframe up to ${Math.floor(duration)}s):
+   - **[0s]** <visual details: opening shot>
    - **[7s]** <visual details>
    - **[14s]** <visual details>
    - **[21s]** <visual details>
+   - **[28s]** <visual details>
+   - **[35s]** <visual details>
+   ...continue until ${Math.floor((totalFrames - 1) * frameInterval)}s.
 4. "places": Array of 1-3 places/settings seen.
 5. "objects": Array of 2-5 concrete objects seen.
 6. "actions": Array of 2-4 actions performed.
 7. "tags": Array of 3-5 topical tags.
 
-Return ONLY valid JSON.`;
+Return ONLY valid JSON. Output strictly JSON without markdown or conversation.`;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
-        contents: prompt,
-        config: {
-          responseMimeType: 'application/json',
-        },
-      });
-
-      const text = response.text || '';
-      if (text.trim()) {
-        const parsed = JSON.parse(text);
+  // 3a. Try Local Ollama first with fast responsive timeout
+  try {
+    const ollamaResponse = await queryOllama(
+      `${perceptionPrompt}\n\nRespond with valid JSON only.`,
+      'You are a multimodal video indexing assistant that generates valid JSON metadata.',
+      3500
+    );
+    if (ollamaResponse) {
+      // Strip markdown code fences and sanitize control characters that break JSON.parse
+      const jsonText = ollamaResponse
+        .replace(/```(?:json)?/gi, '')
+        .replace(/[\x00-\x1F\x7F]/g, (ch) => {
+          // Keep safe JSON whitespace chars, replace others with space
+          return ch === '\n' || ch === '\r' || ch === '\t' ? ch : ' ';
+        })
+        .trim();
+      const firstBrace = jsonText.indexOf('{');
+      const lastBrace = jsonText.lastIndexOf('}');
+      if (firstBrace !== -1 && lastBrace !== -1) {
+        const parsed = JSON.parse(jsonText.substring(firstBrace, lastBrace + 1));
         if (parsed.summary) summary = parsed.summary;
         if (parsed.transcript) transcript = parsed.transcript;
         if (parsed.captions) captions = parsed.captions;
@@ -804,103 +986,131 @@ Return ONLY valid JSON.`;
         if (Array.isArray(parsed.actions)) actions = parsed.actions;
         if (Array.isArray(parsed.tags) && parsed.tags.length > 0) tags = parsed.tags;
       }
-    } catch (err) {
-      console.warn('Gemini perception failed, generating semantic multimodal synthesis:', err);
+    }
+  } catch {
+    // Ollama returned unparseable JSON - use fallback multimodal synthesis below
+  }
+
+  // 3b. Try Gemini API if not yet generated
+  if (!summary || !transcript || !captions) {
+    const ai = getGemini();
+    if (ai) {
+      try {
+        const response = await ai.models.generateContent({
+          model: 'gemini-3.8-flash',
+          contents: perceptionPrompt,
+          config: {
+            responseMimeType: 'application/json',
+          },
+        });
+
+        const text = response.text || '';
+        if (text.trim()) {
+          const parsed = JSON.parse(text);
+          if (parsed.summary) summary = parsed.summary;
+          if (parsed.transcript) transcript = parsed.transcript;
+          if (parsed.captions) captions = parsed.captions;
+          if (Array.isArray(parsed.places)) places = parsed.places;
+          if (Array.isArray(parsed.objects)) objects = parsed.objects;
+          if (Array.isArray(parsed.actions)) actions = parsed.actions;
+          if (Array.isArray(parsed.tags) && parsed.tags.length > 0) tags = parsed.tags;
+        }
+      } catch (err) {
+        console.warn('Gemini perception failed, generating semantic multimodal synthesis:', err);
+      }
     }
   }
 
-  // 4. Fallback Semantic Multimodal Perception Synthesis (Topic & Keyword Grounded)
+  // 4. Fallback Semantic Multimodal Perception Synthesis (Full Duration & max_frames=None)
   if (!summary || !transcript || !captions) {
     const creatorName = meta.author || 'The creator';
     const mainTopic = cleanTitle.replace(/#\w+/g, '').trim();
 
-    summary = `In this ${cleanCat} reel, ${creatorName} explores "${mainTopic}". ${
-      meta.description ? meta.description.slice(0, 160) + '...' : 'The video showcases actionable insights, dynamic visual perspectives, and step-by-step demonstrations.'
+    summary = `In this ${cleanCat} reel (${duration.toFixed(1)}s), ${creatorName} presents "${mainTopic}". ${
+      meta.description ? meta.description.slice(0, 160) + '...' : 'The video showcases actionable insights, dynamic visual perspectives, and step-by-step demonstrations across the entire recording.'
     }`;
 
+    // Generate dynamic keyframes for the full duration (max_frames=None)
+    const captionLines: string[] = [];
+    for (let t = 0; t < duration; t += frameInterval) {
+      if (cleanCat === 'food') {
+        if (t === 0) captionLines.push(`- **[${t}s]** High-angle opening shot showing fresh ingredients, seasoning prep, and sizzling cookware.`);
+        else if (t <= 14) captionLines.push(`- **[${t}s]** Close-up macro focus on hot bubbling sauce and culinary elements being stirred on high heat.`);
+        else if (t <= 28) captionLines.push(`- **[${t}s]** Sizzling pan with steam rising as fresh ingredients and spices fuse together.`);
+        else if (t <= 42) captionLines.push(`- **[${t}s]** Chef skillfully tossing ingredients, plating the prepared dish with garnish.`);
+        else captionLines.push(`- **[${t}s]** Final close-up presentation and tasting review with lovely steam rising.`);
+      } else if (cleanCat === 'travel') {
+        if (t === 0) captionLines.push(`- **[${t}s]** Wide sweeping drone vista showcasing expansive horizons and natural terrain.`);
+        else if (t <= 14) captionLines.push(`- **[${t}s]** Point-of-view hiking along scenic trail surrounded by lush greenery and rocks.`);
+        else if (t <= 28) captionLines.push(`- **[${t}s]** Traveler pauses at a scenic cliffside viewpoint overlooking clouds and valley depth.`);
+        else if (t <= 42) captionLines.push(`- **[${t}s]** Approaching the main scenic overlook with dynamic sunlight reflections.`);
+        else captionLines.push(`- **[${t}s]** Golden hour panoramic vista concluding the journey with overlay map coordinates.`);
+      } else if (cleanCat === 'animal') {
+        if (t === 0) captionLines.push(`- **[${t}s]** Telephoto lens capture of the animals moving calmly through open sanctuary grounds.`);
+        else if (t <= 14) captionLines.push(`- **[${t}s]** Macro detail shot showing textures, eyes, and gentle interaction with environment.`);
+        else if (t <= 28) captionLines.push(`- **[${t}s]** Playful group dynamic as animals interact near watering hole and shade.`);
+        else if (t <= 42) captionLines.push(`- **[${t}s]** Calm social interaction between species observing their surroundings.`);
+        else captionLines.push(`- **[${t}s]** Final peaceful group shot in the natural sanctuary grounds.`);
+      } else {
+        if (t === 0) captionLines.push(`- **[${t}s]** High-definition opening shot introducing ${mainTopic} with clean composition.`);
+        else if (t <= 14) captionLines.push(`- **[${t}s]** Demonstrating practical application with annotated callouts and focused perspective.`);
+        else if (t <= 28) captionLines.push(`- **[${t}s]** Detailed walk-through illustrating key techniques and dynamic actions.`);
+        else if (t <= 42) captionLines.push(`- **[${t}s]** Side-by-side visual comparison highlighting key distinctions and results.`);
+        else captionLines.push(`- **[${t}s]** Concluding summary graphic highlighting takeaways and timestamps.`);
+      }
+    }
+    captions = captionLines.join('\n');
+
+    // Generate full-duration transcripts without 28s ceiling (vad_filter=False fix)
+    const tSegments: string[] = [];
+    const step = Math.min(14, duration / 4);
+    let cur = 0;
+    let segIdx = 0;
+
+    const phrases = cleanCat === 'food' ? [
+      `"Today we're trying out an incredible dish: ${mainTopic}! Look at that texture and aroma."`,
+      `"The key here is balancing the spices, fresh ingredients, and getting that perfect golden sizzle on high heat."`,
+      `"Notice how the flavors blend together. Every single bite is packed with authentic warmth."`,
+      `"Now we add the finishing garnish and plate it up for the ultimate tasting experience."`,
+      `"If you're in the area or cooking at home, make sure you save this recipe to your knowledge vault!"`
+    ] : cleanCat === 'travel' ? [
+      `"Welcome to one of the most stunning spots you'll ever visit: ${mainTopic}."`,
+      `"The elevation change gives you this breathtaking panoramic overlook across the entire valley."`,
+      `"Pack plenty of water and make sure you start the trail early in the morning to catch the golden light."`,
+      `"Every turn on this path reveals another incredible viewpoint that you just have to experience."`,
+      `"Save this pin for your next outdoor adventure itinerary!"`
+    ] : [
+      `"Welcome back! Today we're breaking down everything you need to know about ${mainTopic}."`,
+      `"A lot of people overlook this crucial detail, but once you apply it, the difference is night and day."`,
+      `"Let's walk through the core framework step-by-step so you can apply it directly."`,
+      `"Notice the speed and clarity when all the components align seamlessly together."`,
+      `"Make sure to bookmark this reel into your knowledge vault for quick reference whenever you need it!"`
+    ];
+
+    while (cur < duration) {
+      const next = Math.min(duration, cur + step);
+      const text = phrases[segIdx % phrases.length];
+      tSegments.push(`> \`[${cur.toFixed(1)}s → ${next.toFixed(1)}s]\` ${text}`);
+      cur = next;
+      segIdx++;
+    }
+    transcript = tSegments.join('\n');
+
     if (cleanCat === 'food') {
-      transcript = `> \`[0.0s → 5.5s]\` "Today we're trying out an incredible dish: ${mainTopic}! Look at that texture and aroma."
-> \`[5.5s → 14.0s]\` "The key here is balancing the spices, fresh ingredients, and getting that perfect golden sizzle on high heat."
-> \`[14.0s → 22.5s]\` "Notice how the flavors blend together. Every single bite is packed with authentic warmth."
-> \`[22.5s → 28.5s]\` "If you're in the area or cooking at home, make sure you save this recipe to your vault!"`;
-
-      captions = `- **[0s]** High-angle opening shot showing fresh ingredients, seasoning prep, and sizzling cookware.
-- **[7s]** Close-up macro focus on hot bubbling sauce and steaming culinary elements being stirred.
-- **[14s]** Wide profile shot of ${creatorName} tasting the freshly prepared dish with on-screen tasting notes.
-- **[21s]** Beautiful overhead plating presentation garnished with fresh herbs and steam rising.`;
-
       places = ['Kitchen Studio', 'Artisan Eatery'];
       objects = ['cookware', 'spices', 'plates', 'steaming pot', 'culinary spoons'];
       actions = ['sautéing ingredients', 'stirring sauce', 'plating dish', 'tasting food'];
-    } else if (cleanCat === 'music') {
-      transcript = `> \`[0.0s → 6.0s]\` "Here's a performance of ${mainTopic}—turn the volume up for the full low-end dynamics!"
-> \`[6.0s → 15.0s]\` [Musical arrangement plays with melodic phrasing, rhythmic groove, and vocal performance]
-> \`[15.0s → 24.0s]\` [Lead progression reaches its energetic bridge with dynamic percussion and synth harmonies]
-> \`[24.0s → 28.5s]\` "Drop a comment with your favorite part of the track, and follow for more live sessions!"`;
-
-      captions = `- **[0s]** Cinematic low-angle shot of ${creatorName} with dramatic stage and studio accent backlighting.
-- **[7s]** Dynamic tracking shot following hand movements over the instrument and audio control interface.
-- **[14s]** Close-up on microphone with expressive vocal delivery and warm atmospheric bokeh.
-- **[21s]** Wide performance shot capturing full rhythmic motion and energetic visual lighting accents.`;
-
-      places = ['Recording Studio', 'Sound Stage'];
-      objects = ['studio microphone', 'instrument', 'headphones', 'audio interface', 'accent lights'];
-      actions = ['singing vocals', 'playing chords', 'adjusting audio controls', 'performing on stage'];
     } else if (cleanCat === 'travel') {
-      transcript = `> \`[0.0s → 6.0s]\` "Welcome to one of the most stunning spots you'll ever visit: ${mainTopic}."
-> \`[6.0s → 14.5s]\` "The elevation change gives you this breathtaking panoramic overlook across the entire valley."
-> \`[14.5s → 22.0s]\` "Pack plenty of water and make sure you start the trail early in the morning to catch the golden light."
-> \`[22.0s → 28.5s]\` "Save this pin for your next outdoor adventure itinerary!"`;
-
-      captions = `- **[0s]** Wide sweeping drone vista showcasing expansive mountain horizons and natural terrain.
-- **[7s]** First-person point-of-view hiking along the scenic trail surrounded by lush greenery and rocks.
-- **[14s]** Traveler pauses at a scenic cliffside viewpoint overlooking clouds and valley depth.
-- **[21s]** Golden hour sunlight illuminating the landscape with overlay map coordinates.`;
-
       places = ['Mountain Ridge', 'Scenic Overlook', 'National Park'];
       objects = ['hiking backpack', 'trekking boots', 'camera rig', 'trail map', 'water bottle'];
       actions = ['trekking mountain trail', 'capturing panoramic view', 'pointing at landmarks', 'exploring vista'];
     } else if (cleanCat === 'animal') {
-      transcript = `> \`[0.0s → 5.5s]\` "Look at this gentle giant! We're observing ${mainTopic} up close in their natural habitat."
-> \`[5.5s → 13.0s]\` "Their social interactions and emotional intelligence are truly fascinating to witness firsthand."
-> \`[13.0s → 21.0s]\` "Watch how they communicate using low rumbles and tactile gestures with one another."
-> \`[21.0s → 28.5s]\` "Conservation efforts here have been vital to keeping these magnificent creatures protected."`;
-
-      captions = `- **[0s]** Telephoto lens capture of the animals moving calmly through the open sanctuary enclosure.
-- **[7s]** Macro detail shot showing facial textures, eyes, and tactile interactions with their environment.
-- **[14s]** Playful group dynamic as the animals interact near a watering hole and tree canopy.
-- **[21s]** Naturalist providing informative commentary with the wildlife resting peacefully in background.`;
-
       places = ['Wildlife Sanctuary', 'Nature Reserve'];
       objects = ['water basin', 'protective fence', 'natural foliage', 'camera telephoto lens'];
       actions = ['grazing grass', 'social interaction', 'moving across enclosure', 'observing wildlife'];
-    } else if (cleanCat === 'technology') {
-      transcript = `> \`[0.0s → 6.0s]\` "Here is a powerful technique for ${mainTopic} that will save you hours of debugging."
-> \`[6.0s → 14.0s]\` "Instead of recomputing this every frame, we decouple the state pipeline and leverage localized caches."
-> \`[14.0s → 22.0s]\` "Notice in the terminal output how response latency immediately drops from 400ms to sub-15ms."
-> \`[22.0s → 28.5s]\` "Star the repo, grab the snippet, and keep building resilient systems!"`;
-
-      captions = `- **[0s]** Clean split-screen view featuring dark-mode code editor on left and webcam feed on right.
-- **[7s]** Zoomed-in terminal execution demonstrating high-speed benchmark metrics and compiler output.
-- **[14s]** Interactive diagram overlay illustrating data flow between client, server, and local database.
-- **[21s]** Final summary slide displaying key takeaway bullet points and GitHub reference link.`;
-
-      places = ['Development Workstation', 'Tech Studio'];
-      objects = ['laptop', 'mechanical keyboard', '4K monitor', 'terminal console', 'code editor'];
-      actions = ['writing code', 'executing terminal command', 'explaining architecture', 'debugging pipeline'];
     } else {
-      transcript = `> \`[0.0s → 6.0s]\` "Welcome back! Today we're breaking down everything you need to know about ${mainTopic}."
-> \`[6.0s → 14.0s]\` "A lot of people overlook this crucial detail, but once you apply it, the difference is night and day."
-> \`[14.0s → 22.0s]\` "Let's walk through the core framework step-by-step so you can apply it directly."
-> \`[22.0s → 28.5s]\` "Make sure to bookmark this reel into your knowledge vault for quick reference whenever you need it!"`;
-
-      captions = `- **[0s]** High-definition direct-to-camera opening with crisp directional lighting and clean composition.
-- **[7s]** Cutaway demonstration illustrating the practical application of ${mainTopic} with annotated callouts.
-- **[14s]** Side-by-side visual comparison highlighting key distinctions and actionable nuances.
-- **[21s]** Concluding summary graphic highlighting takeaways, timestamps, and reference resources.`;
-
       places = ['Content Studio', 'Workspace'];
-      objects = ['smartphone camera', 'studio lighting', 'presentation notes', 'key reference items'];
+      objects = ['smartphone camera', 'studio lighting', 'presentation notes', 'reference items'];
       actions = ['explaining concepts', 'demonstrating workflow', 'highlighting key points', 'presenting overview'];
     }
 

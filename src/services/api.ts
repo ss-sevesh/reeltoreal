@@ -7,6 +7,14 @@ export interface ReindexResponse {
   timestamp: string;
 }
 
+export interface InspectResponse {
+  title: string;
+  category: string;
+  duration: number;
+  tags: string[];
+  source_url: string;
+}
+
 export interface IngestResponse {
   success: boolean;
   note: VaultNote;
@@ -134,6 +142,22 @@ export const api = {
   },
 
   /**
+   * Auto-inspect a video URL (title, category, duration, tags)
+   */
+  async inspectVideo(url: string): Promise<InspectResponse> {
+    const res = await fetch('/api/inspect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to inspect video URL');
+    }
+    return res.json();
+  },
+
+  /**
    * Ingest a new reel / video through the 6-stage multimodal pipeline
    */
   async ingestVideo(
@@ -141,7 +165,7 @@ export const api = {
     title?: string,
     category?: string
   ): Promise<IngestResponse> {
-    const res = await fetch('/api/ingest', {
+    const res = await fetch('/api/process', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url, title, category }),
